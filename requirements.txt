@@ -1,0 +1,13 @@
+alembic==1.18.4
+fastapi==0.135.3
+metaapi_cloud_sdk==29.1.1
+pydantic==2.13.0
+python-dotenv==1.2.2
+bcrypt
+python_jose==3.5.0
+SQLAlchemy==2.0.49
+typing_extensions==4.15.0
+uvicorn
+psycopg2-binary
+python-multipart
+httpx

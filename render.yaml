@@ -1,0 +1,58 @@
+# render.yaml — NEXORA AI TRADER (deploy to Render.com)
+#
+# Creates three services in one account:
+#   1. nexora-db      : managed PostgreSQL
+#   2. nexora-web     : the FastAPI admin dashboard
+#   3. nexora-worker  : the Telegram listener + trade engine + expiry loop
+#
+# After first deploy, set the secret env vars (ACCESS_TOKEN, TELEGRAM_BOT_TOKEN,
+# TRIAL_CHANNEL_ID, VIP_CHANNEL_ID, ADMIN_PASSWORD, SECRET_KEY) in the Render
+# dashboard for BOTH the web and worker services.
+
+databases:
+  - name: nexora-db
+    databaseName: nexora
+    plan: basic-256mb
+
+services:
+  - type: web
+    name: nexora-web
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nexora-db
+          property: connectionString
+      - key: ACCESS_TOKEN
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+
+  - type: worker
+    name: nexora-worker
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run_worker.py
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nexora-db
+          property: connectionString
+      - key: ACCESS_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TRIAL_CHANNEL_ID
+        sync: false
+      - key: VIP_CHANNEL_ID
+        sync: false
+      - key: TRADE_SYMBOL
+        value: XAUUSD
