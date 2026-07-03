@@ -325,6 +325,14 @@ async def close_runner(client_id: int, db: Session = Depends(get_db),
                        user=Depends(get_current_user)):
     if not db.query(Client).get(client_id):
         raise HTTPException(404, "Client not found")
+    # A runner only exists after TP1 (group in tp1_done). Check before queuing.
+    has_runner = db.query(TradeGroup).filter(
+        TradeGroup.client_id == client_id,
+        TradeGroup.state == "tp1_done").first()
+    if not has_runner:
+        return {"queued": False, "no_runner": True,
+                "message": "No runner to close yet — TP1 has not been reached. "
+                           "Use Close All to close the open trades."}
     return _queue(db, "close_runner", _actor(user), client_id)
 
 
@@ -358,6 +366,10 @@ async def bulk_trading(data: dict, db: Session = Depends(get_db),
 
 @router.post("/bulk/close-runner")
 async def bulk_close_runner(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    has_runner = db.query(TradeGroup).filter(TradeGroup.state == "tp1_done").first()
+    if not has_runner:
+        return {"queued": False, "no_runner": True,
+                "message": "No runners to close yet — no client has reached TP1."}
     return _queue(db, "close_runner_bulk", _actor(user))
 
 

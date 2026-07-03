@@ -87,7 +87,12 @@ async def close_all_for_client(client_id: int) -> dict:
 
 
 async def close_runner_for_client(client_id: int) -> dict:
-    """Close the remaining runner position(s) for a client."""
+    """Close ONLY the runner — the single break-even position left after TP1.
+
+    A runner only exists once TP1 has been reached (2 closed, 1 left running).
+    If the 3 positions are still open (no TP1 yet) there is no runner, so this
+    closes nothing and says so — it will NOT close the whole set (that's what
+    Close All is for)."""
     db = SessionLocal()
     try:
         client = db.query(Client).get(client_id)
@@ -95,16 +100,26 @@ async def close_runner_for_client(client_id: int) -> dict:
             return {"success": False, "message": "client not provisioned"}
         name = client.name
         acc_id = client.metaapi_account_id
+        # Only groups that have reached TP1 have a runner. Collect their magics.
+        runner_magics = {int(g.magic) for g in db.query(TradeGroup).filter(
+            TradeGroup.client_id == client_id,
+            TradeGroup.state == "tp1_done").all()}
     finally:
         db.close()
+
+    if not runner_magics:
+        return {"success": True, "closed": 0,
+                "message": "No runner to close — TP1 has not been reached yet "
+                           "(use Close All to close all 3 open positions)."}
 
     async def _do(conn):
         positions = await _nexora_positions(conn)
         closed = 0
         for p in positions:
-            r = await trader.close_position(conn, p.get("id"))
-            if r.get("success"):
-                closed += 1
+            if int(p.get("magic", 0) or 0) in runner_magics:   # only runner positions
+                r = await trader.close_position(conn, p.get("id"))
+                if r.get("success"):
+                    closed += 1
         return {"success": True, "closed": closed}
 
     result = await _with_connection(acc_id, _do)
@@ -116,7 +131,7 @@ async def close_runner_for_client(client_id: int) -> dict:
             g.state = "closed"
         db.commit()
         _log(db, "close_runner",
-             f"{name}: Close Runner — {result.get('closed', 0)} position(s) closed",
+             f"{name}: Close Runner — {result.get('closed', 0)} runner position(s) closed",
              client_id=client_id)
     finally:
         db.close()
