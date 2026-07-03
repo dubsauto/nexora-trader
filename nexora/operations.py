@@ -7,9 +7,8 @@
 from nexora import config
 from app.database import SessionLocal
 from app.model import Client, TradeGroup, ActivityLog
-from app.services.account_management import account_manager
 from app.services.trading import trader
-from hedgebridge.rpc_pool import rpc_pool
+from nexora.deploy_manager import deploy_manager
 
 
 def _log(db, action, message, client_id=None):
@@ -19,19 +18,17 @@ def _log(db, action, message, client_id=None):
 
 
 async def _with_connection(account_id, fn):
-    """Deploy, run fn(conn), then undeploy — always cleans up."""
-    dep = await account_manager.deploy_and_wait(account_id)
-    if not dep.get("success"):
-        return {"success": False, "message": f"deploy failed: {dep.get('message')}"}
+    """Acquire (deploy+connect) via the shared reference-counted manager, run
+    fn(conn), then release. If a signal is also using the account it stays
+    deployed until both are done — no undeploy out from under an active signal."""
     try:
-        conn = await rpc_pool.get_connection(account_id, force=True)
+        conn = await deploy_manager.acquire(account_id)
+    except Exception as e:
+        return {"success": False, "message": f"deploy/connect failed: {e}"}
+    try:
         return await fn(conn)
     finally:
-        try:
-            await rpc_pool.invalidate(account_id)
-        except Exception:
-            pass
-        await account_manager.undeploy(account_id)
+        await deploy_manager.release(account_id)
 
 
 async def _nexora_positions(conn):

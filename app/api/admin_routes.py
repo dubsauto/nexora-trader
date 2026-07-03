@@ -315,11 +315,14 @@ async def set_trading(client_id: int, data: dict, db: Session = Depends(get_db),
 def _queue(db, action, actor, client_id=None):
     # Dedup: if an identical command is already pending/running, don't stack
     # another. Collapses accidental double/triple clicks into one and avoids
-    # pointless deploy/undeploy churn on the same account.
+    # pointless deploy/undeploy churn on the same account. Only RECENT commands
+    # count — a stale one (worker died mid-run) must never block forever.
+    cutoff = datetime.utcnow() - timedelta(seconds=180)
     existing = db.query(Command).filter(
         Command.action == action,
         Command.client_id == client_id,
-        Command.status.in_(["pending", "running"])).first()
+        Command.status.in_(["pending", "running"]),
+        Command.created_at >= cutoff).first()
     if existing:
         return {"queued": False, "duplicate": True, "command_id": existing.id,
                 "message": "Already queued — please wait for it to finish."}

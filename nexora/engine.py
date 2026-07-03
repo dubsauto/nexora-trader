@@ -18,9 +18,8 @@ from datetime import datetime
 from nexora import config
 from app.database import SessionLocal
 from app.model import Signal, Client, TradeGroup, ActivityLog
-from app.services.account_management import account_manager
 from app.services.trading import trader
-from hedgebridge.rpc_pool import rpc_pool
+from nexora.deploy_manager import deploy_manager
 
 
 def _log(db, category, action, message, client_id=None, signal_id=None):
@@ -77,46 +76,32 @@ class TradeEngine:
                 return
 
             _log(db, "signal", "processing",
-                 f"{sig.direction} {sig.channel} — {len(eligible)} eligible client(s), deploying",
+                 f"{sig.symbol} {sig.direction} {sig.channel} — "
+                 f"{len(eligible)} eligible client(s), deploying",
                  signal_id=sig.id)
 
-            # 2) deploy all in parallel
-            deploy_results = await asyncio.gather(
-                *[account_manager.deploy_and_wait(c.metaapi_account_id) for c in eligible],
-                return_exceptions=True,
-            )
-            ready = []
-            for c, res in zip(eligible, deploy_results):
-                ok = isinstance(res, dict) and res.get("success")
-                if ok:
-                    ready.append(c)
-                else:
-                    _log(db, "client", "deploy_failed",
-                         f"Deploy failed: {res}", client_id=c.id, signal_id=sig.id)
-            if not ready:
-                sig.state = "expired"
-                db.commit()
-                _log(db, "signal", "deploy_failed",
-                     "All deploys failed — signal dropped", signal_id=sig.id)
-                return
-
-            # build connections in parallel
-            conn_results = await asyncio.gather(
-                *[self._connect(c.metaapi_account_id) for c in ready],
+            # 2) acquire (deploy + connect) all accounts in parallel. The
+            #    deploy_manager reference-counts, so accounts shared with other
+            #    concurrent signals are deployed once and undeployed only when
+            #    the last signal releases them.
+            acq_results = await asyncio.gather(
+                *[deploy_manager.acquire(c.metaapi_account_id) for c in eligible],
                 return_exceptions=True,
             )
             active_clients = []
-            for c, conn in zip(ready, conn_results):
-                if isinstance(conn, Exception) or conn is None:
+            for c, res in zip(eligible, acq_results):
+                if isinstance(res, Exception) or res is None:
                     _log(db, "client", "connect_failed",
-                         f"Connect failed: {conn}", client_id=c.id, signal_id=sig.id)
+                         f"Deploy/connect failed: {res}", client_id=c.id, signal_id=sig.id)
                     continue
-                connections[c.metaapi_account_id] = conn
+                connections[c.metaapi_account_id] = res   # account_id -> connection
                 active_clients.append(c)
             if not active_clients:
                 sig.state = "expired"
                 db.commit()
-                await self._undeploy_all(connections, db, sig.id)
+                _log(db, "signal", "deploy_failed",
+                     "No accounts could be deployed/connected — signal dropped",
+                     signal_id=sig.id)
                 return
 
             # 3) watch entry zone within the 5-minute window
@@ -127,7 +112,6 @@ class TradeEngine:
                 _log(db, "signal", "window_expired",
                      "Price did not enter the zone within the window — discarded",
                      signal_id=sig.id)
-                await self._undeploy_all(connections, db, sig.id)
                 return
 
             # 4) place 3 positions per client (parallel)
@@ -139,20 +123,29 @@ class TradeEngine:
             sig.state = "filled"
             db.commit()
 
-            # 5) manage TP1 for all groups, then undeploy
+            # 5) manage TP1 for all groups
             await self._manage_tp1(db, sig, active_clients, connections)
 
             sig.state = "done"
             db.commit()
-            await self._undeploy_all(connections, db, sig.id)
 
         except Exception as e:
             print(f"[Engine] signal {signal_id} error: {e}")
-            try:
-                await self._undeploy_all(connections, db, signal_id)
-            except Exception:
-                pass
         finally:
+            # release every account we acquired (undeploy happens only when the
+            # last concurrent signal on that account releases it)
+            for acc_id in list(connections.keys()):
+                try:
+                    await deploy_manager.release(acc_id)
+                except Exception as e:
+                    print(f"[Engine] release {acc_id} error: {e}")
+            if connections:
+                try:
+                    db.rollback()
+                    _log(db, "signal", "released",
+                         f"Released {len(connections)} account(s)", signal_id=signal_id)
+                except Exception:
+                    pass
             db.close()
             async with self._lock:
                 self._active.discard(signal_id)
@@ -197,13 +190,16 @@ class TradeEngine:
         symbol = sig.symbol
         mult = config.risk_multiplier(client.risk_profile)
         lot = client.effective_lot(mult)
-        magic = client.magic or (config.MAGIC_BASE + client.id)
 
-        group = TradeGroup(signal_id=sig.id, client_id=client.id, magic=magic,
+        group = TradeGroup(signal_id=sig.id, client_id=client.id, magic=0,
                            lot=lot, tickets=[], state="open",
                            opened_at=datetime.utcnow())
         db.add(group)
         db.flush()
+        # Unique magic PER GROUP (per client+signal) so concurrent signals on
+        # the same account never collide during TP1 management or closing.
+        magic = config.MAGIC_BASE + group.id
+        group.magic = magic
 
         tickets = []
         opened = 0
@@ -270,8 +266,8 @@ class TradeEngine:
                     done_ids.append(cid)
                     continue
 
-                # positions still open for this client's magic
-                positions = await self._positions_for_magic(conn, group.magic)
+                # positions still open for THIS group's unique magic + symbol
+                positions = await self._positions_for_magic(conn, group.magic, symbol)
                 if not positions:
                     group.state = "closed"
                     db.commit()
@@ -306,48 +302,19 @@ class TradeEngine:
              f"{client.name}: TP1 hit — closed {len(to_close)}, runner at break-even",
              client_id=client.id, signal_id=sig.id)
 
-    async def _positions_for_magic(self, conn, magic):
+    async def _positions_for_magic(self, conn, magic, symbol=None):
         try:
             positions = await conn.get_positions()
         except Exception:
             return []
         out = []
         for p in positions:
-            if int(p.get("magic", 0) or 0) == int(magic):
-                out.append(p)
+            if int(p.get("magic", 0) or 0) != int(magic):
+                continue
+            if symbol is not None and p.get("symbol") != symbol:
+                continue
+            out.append(p)
         return out
-
-    # ============================================================
-    # CONNECT / UNDEPLOY HELPERS
-    # ============================================================
-    async def _connect(self, account_id, attempts: int = 3, delay: int = 10):
-        """Build an RPC connection, retrying a few times. After a cold
-        deploy/redeploy the broker sync can need a couple of tries."""
-        last_err = None
-        for i in range(attempts):
-            try:
-                return await rpc_pool.get_connection(account_id, force=True)
-            except Exception as e:
-                last_err = e
-                print(f"[Engine] connect {account_id} attempt {i+1}/{attempts} failed: {e}")
-                if i < attempts - 1:
-                    await asyncio.sleep(delay)
-        raise Exception(str(last_err) if last_err else "connection failed")
-
-    async def _undeploy_all(self, connections, db, signal_id):
-        for acc_id in list(connections.keys()):
-            try:
-                await rpc_pool.invalidate(acc_id)
-            except Exception:
-                pass
-            try:
-                await account_manager.undeploy(acc_id)
-            except Exception as e:
-                print(f"[Engine] undeploy {acc_id} error: {e}")
-        if connections:
-            _log(db, "signal", "undeployed",
-                 f"Undeployed {len(connections)} account(s) — done",
-                 signal_id=signal_id)
 
 
 engine = TradeEngine()

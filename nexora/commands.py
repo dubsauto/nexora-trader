@@ -5,10 +5,43 @@
 # This avoids the web and worker fighting over an account's deploy state.
 
 import json
+from datetime import datetime, timedelta
 
 from app.database import SessionLocal
 from app.model import Command
 from nexora import operations
+
+STALE_SECONDS = 300   # a command older than this is considered stale
+
+
+def reset_interrupted_on_startup():
+    """Any command left 'running' when the worker starts was interrupted by a
+    restart/crash — mark it error so it can't block the dedup forever."""
+    db = SessionLocal()
+    try:
+        n = 0
+        for c in db.query(Command).filter(Command.status == "running").all():
+            c.status = "error"
+            c.result = "interrupted by worker restart"
+            n += 1
+        if n:
+            db.commit()
+            print(f"[Commands] reset {n} interrupted command(s) on startup")
+    finally:
+        db.close()
+
+
+def _expire_stale(db):
+    """Mark very old pending/running commands as error (self-healing)."""
+    cutoff = datetime.utcnow() - timedelta(seconds=STALE_SECONDS)
+    stale = db.query(Command).filter(
+        Command.status.in_(["pending", "running"]),
+        Command.created_at < cutoff).all()
+    for c in stale:
+        c.status = "error"
+        c.result = "stale — expired before completion"
+    if stale:
+        db.commit()
 
 
 async def _run(action: str, client_id):
@@ -27,6 +60,7 @@ async def process_pending() -> int:
     """Execute all pending commands. Returns how many were processed."""
     db = SessionLocal()
     try:
+        _expire_stale(db)
         cmds = db.query(Command).filter(Command.status == "pending").all()
         jobs = [(c.id, c.action, c.client_id) for c in cmds]
         for c in cmds:

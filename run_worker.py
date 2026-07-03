@@ -19,7 +19,7 @@ from nexora import config
 from nexora.telegram import listener
 from nexora.engine import engine
 from nexora.expiry import check_expiries
-from nexora.commands import process_pending
+from nexora.commands import process_pending, reset_interrupted_on_startup
 from app.init_db import init_database
 
 EXPIRY_INTERVAL = 60          # seconds between expiry checks
@@ -83,6 +83,7 @@ async def _expiry_loop():
 
 async def _command_loop():
     print("[Worker] Command processor running")
+    reset_interrupted_on_startup()
     while True:
         try:
             n = await process_pending()
