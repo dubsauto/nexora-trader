@@ -165,6 +165,13 @@ async def create_client(data: dict, db: Session = Depends(get_db), user=Depends(
     if prov.get("success"):
         c.metaapi_account_id = prov["account_id"]
         c.connection_note = "provisioned"
+        # On-demand cost model: keep the account UNDEPLOYED until a signal needs
+        # it. MetaApi auto-deploys a freshly created account, so undeploy it now.
+        try:
+            await account_manager.undeploy(c.metaapi_account_id)
+            c.deploy_state = "undeployed"
+        except Exception as e:
+            print(f"[Admin] undeploy after provisioning failed: {e}")
     else:
         c.connection_note = f"provision failed: {prov.get('message')}"
     db.commit()
