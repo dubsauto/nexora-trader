@@ -193,6 +193,26 @@ class ActivityLog(Base):
 
 
 # =========================================================
+# COMMANDS (dashboard → worker queue)
+# =========================================================
+# Trade actions (Close Runner / Close All, bulk versions) are QUEUED by the
+# web dashboard and executed by the WORKER, so only one process ever touches
+# a MetaApi account. This prevents the web and worker fighting over deploy
+# state (which caused endless "no accounts deployed yet" subscription errors).
+class Command(Base):
+    __tablename__ = "commands"
+
+    id = Column(Integer, primary_key=True)
+    action = Column(String(32), nullable=False)   # close_all / close_runner / close_all_bulk / close_runner_bulk
+    client_id = Column(Integer, nullable=True)     # null for bulk actions
+    status = Column(String(12), default="pending") # pending / running / done / error
+    result = Column(Text, nullable=True)
+    requested_by = Column(String(64), default="admin")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# =========================================================
 # SETTINGS (key/value)
 # =========================================================
 class Setting(Base):

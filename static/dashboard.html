@@ -346,15 +346,13 @@ async function toggleTrading(id, enabled){
   catch(e){ toast(e.message,"err"); }
 }
 async function closeRunner(id){
-  if(!confirm("Close the runner position for this client? (deploys, closes, undeploys)")) return;
-  toast("Working... deploying account");
-  try{ const r=await api(`/api/clients/${id}/close-runner`,"POST"); toast(`Closed ${r.closed||0} position(s)`,"ok"); loadAll(); }
+  if(!confirm("Close the runner position for this client? The worker processes it in a few seconds.")) return;
+  try{ await api(`/api/clients/${id}/close-runner`,"POST"); toast("Close Runner queued — watch the Activity log","ok"); setTimeout(loadAll,4000); }
   catch(e){ toast(e.message,"err"); }
 }
 async function closeAll(id){
-  if(!confirm("Close ALL positions for this client? (deploys, closes, undeploys)")) return;
-  toast("Working... deploying account");
-  try{ const r=await api(`/api/clients/${id}/close-all`,"POST"); toast(`Closed ${r.closed||0} position(s)`,"ok"); loadAll(); }
+  if(!confirm("Close ALL positions for this client? The worker processes it in a few seconds.")) return;
+  try{ await api(`/api/clients/${id}/close-all`,"POST"); toast("Close All queued — watch the Activity log","ok"); setTimeout(loadAll,4000); }
   catch(e){ toast(e.message,"err"); }
 }
 async function del(id){
@@ -371,15 +369,13 @@ async function bulkTrading(enabled){
   catch(e){ toast(e.message,"err"); }
 }
 async function bulkCloseRunner(){
-  if(!confirm("Close the RUNNER position for ALL clients? (deploys, closes, undeploys each)")) return;
-  toast("Working across all clients… this can take a moment");
-  try{ const r=await api("/api/bulk/close-runner","POST"); toast(`Closed ${r.closed||0} position(s) across ${r.clients||0} client(s)`,"ok"); loadAll(); }
+  if(!confirm("Close the RUNNER position for ALL clients? The worker processes these one by one.")) return;
+  try{ await api("/api/bulk/close-runner","POST"); toast("Bulk Close Runner queued — watch the Activity log","ok"); setTimeout(loadAll,5000); }
   catch(e){ toast(e.message,"err"); }
 }
 async function bulkCloseAll(){
   if(!confirm("🚨 Close ALL trades for ALL clients? This is an emergency stop.")) return;
-  toast("Working across all clients… this can take a moment");
-  try{ const r=await api("/api/bulk/close-all","POST"); toast(`Closed ${r.closed||0} position(s) across ${r.clients||0} client(s)`,"ok"); loadAll(); }
+  try{ await api("/api/bulk/close-all","POST"); toast("Bulk Close All queued — watch the Activity log","ok"); setTimeout(loadAll,5000); }
   catch(e){ toast(e.message,"err"); }
 }
 

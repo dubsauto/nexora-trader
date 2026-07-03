@@ -12,10 +12,9 @@ from sqlalchemy import desc
 
 from app.database import get_db
 from app.auth import get_current_user
-from app.model import Client, Signal, TradeGroup, ActivityLog
+from app.model import Client, Signal, TradeGroup, ActivityLog, Command
 from app.services.account_management import account_manager
 from nexora import config
-from nexora import operations
 
 router = APIRouter(prefix="/api", tags=["Admin"])
 
@@ -311,16 +310,30 @@ async def set_trading(client_id: int, data: dict, db: Session = Depends(get_db),
 
 
 # ─────────────────────────────────────────────────────────────
-# TRADE CONTROLS (deploy → act → undeploy)
+# TRADE CONTROLS — QUEUED to the worker (single owner of MetaApi)
 # ─────────────────────────────────────────────────────────────
+def _queue(db, action, actor, client_id=None):
+    cmd = Command(action=action, client_id=client_id, requested_by=actor, status="pending")
+    db.add(cmd)
+    db.commit()
+    return {"queued": True, "command_id": cmd.id,
+            "message": "Queued — the worker will process it in a few seconds."}
+
+
 @router.post("/clients/{client_id}/close-runner")
-async def close_runner(client_id: int, user=Depends(get_current_user)):
-    return await operations.close_runner_for_client(client_id)
+async def close_runner(client_id: int, db: Session = Depends(get_db),
+                       user=Depends(get_current_user)):
+    if not db.query(Client).get(client_id):
+        raise HTTPException(404, "Client not found")
+    return _queue(db, "close_runner", _actor(user), client_id)
 
 
 @router.post("/clients/{client_id}/close-all")
-async def close_all(client_id: int, user=Depends(get_current_user)):
-    return await operations.close_all_for_client(client_id)
+async def close_all(client_id: int, db: Session = Depends(get_db),
+                    user=Depends(get_current_user)):
+    if not db.query(Client).get(client_id):
+        raise HTTPException(404, "Client not found")
+    return _queue(db, "close_all", _actor(user), client_id)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -344,13 +357,13 @@ async def bulk_trading(data: dict, db: Session = Depends(get_db),
 
 
 @router.post("/bulk/close-runner")
-async def bulk_close_runner(user=Depends(get_current_user)):
-    return await operations.close_runner_for_all()
+async def bulk_close_runner(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    return _queue(db, "close_runner_bulk", _actor(user))
 
 
 @router.post("/bulk/close-all")
-async def bulk_close_all(user=Depends(get_current_user)):
-    return await operations.close_all_for_all()
+async def bulk_close_all(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    return _queue(db, "close_all_bulk", _actor(user))
 
 
 # ─────────────────────────────────────────────────────────────

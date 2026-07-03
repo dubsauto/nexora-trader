@@ -19,10 +19,12 @@ from nexora import config
 from nexora.telegram import listener
 from nexora.engine import engine
 from nexora.expiry import check_expiries
+from nexora.commands import process_pending
 from app.init_db import init_database
 
 EXPIRY_INTERVAL = 60          # seconds between expiry checks
 ENGINE_INTERVAL = 2           # seconds between engine ticks
+COMMAND_INTERVAL = 3          # seconds between command-queue checks
 
 
 async def _telegram_loop():
@@ -79,6 +81,18 @@ async def _expiry_loop():
         await asyncio.sleep(EXPIRY_INTERVAL)
 
 
+async def _command_loop():
+    print("[Worker] Command processor running")
+    while True:
+        try:
+            n = await process_pending()
+            if n:
+                print(f"[Worker] processed {n} queued command(s)")
+        except Exception as e:
+            print(f"[Worker] command loop error: {e}")
+        await asyncio.sleep(COMMAND_INTERVAL)
+
+
 async def main():
     await init_database()
     print("[Worker] NEXORA worker starting…")
@@ -86,6 +100,7 @@ async def main():
         _telegram_loop(),
         _engine_loop(),
         _expiry_loop(),
+        _command_loop(),
     )
 
 
