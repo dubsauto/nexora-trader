@@ -246,6 +246,15 @@ function toast(msg, kind){ const t=document.getElementById("toast");
   t.textContent=msg; t.className=""; t.classList.add("show"); if(kind)t.classList.add(kind);
   setTimeout(()=>t.classList.remove("show"), 3200); }
 
+// Debounce: ignore repeat clicks of the same action for a few seconds.
+const _busy = new Set();
+async function debounced(key, fn){
+  if(_busy.has(key)){ toast("Please wait — that action is still processing","err"); return; }
+  _busy.add(key);
+  try{ return await fn(); }
+  finally{ setTimeout(()=>_busy.delete(key), 4000); }
+}
+
 async function api(path, method="GET", body){
   const opt = { method, headers:H };
   if(body) opt.body = JSON.stringify(body);
@@ -347,17 +356,24 @@ async function toggleTrading(id, enabled){
 }
 async function closeRunner(id){
   if(!confirm("Close the runner position for this client? The worker processes it in a few seconds.")) return;
-  try{
-    const r=await api(`/api/clients/${id}/close-runner`,"POST");
-    if(r && r.no_runner){ toast(r.message,"err"); return; }
-    toast("Close Runner queued — watch the Activity log","ok"); setTimeout(loadAll,4000);
-  }
-  catch(e){ toast(e.message,"err"); }
+  debounced("close-runner-"+id, async ()=>{
+    try{
+      const r=await api(`/api/clients/${id}/close-runner`,"POST");
+      if(r && r.no_runner){ toast(r.message,"err"); return; }
+      if(r && r.duplicate){ toast(r.message,"err"); return; }
+      toast("Close Runner queued — watch the Activity log","ok"); setTimeout(loadAll,4000);
+    }catch(e){ toast(e.message,"err"); }
+  });
 }
 async function closeAll(id){
   if(!confirm("Close ALL positions for this client? The worker processes it in a few seconds.")) return;
-  try{ await api(`/api/clients/${id}/close-all`,"POST"); toast("Close All queued — watch the Activity log","ok"); setTimeout(loadAll,4000); }
-  catch(e){ toast(e.message,"err"); }
+  debounced("close-all-"+id, async ()=>{
+    try{
+      const r=await api(`/api/clients/${id}/close-all`,"POST");
+      if(r && r.duplicate){ toast(r.message,"err"); return; }
+      toast("Close All queued — watch the Activity log","ok"); setTimeout(loadAll,4000);
+    }catch(e){ toast(e.message,"err"); }
+  });
 }
 async function del(id){
   const c=(window._clients||[]).find(x=>x.id===id);
@@ -374,17 +390,24 @@ async function bulkTrading(enabled){
 }
 async function bulkCloseRunner(){
   if(!confirm("Close the RUNNER position for ALL clients? The worker processes these one by one.")) return;
-  try{
-    const r=await api("/api/bulk/close-runner","POST");
-    if(r && r.no_runner){ toast(r.message,"err"); return; }
-    toast("Bulk Close Runner queued — watch the Activity log","ok"); setTimeout(loadAll,5000);
-  }
-  catch(e){ toast(e.message,"err"); }
+  debounced("bulk-close-runner", async ()=>{
+    try{
+      const r=await api("/api/bulk/close-runner","POST");
+      if(r && r.no_runner){ toast(r.message,"err"); return; }
+      if(r && r.duplicate){ toast(r.message,"err"); return; }
+      toast("Bulk Close Runner queued — watch the Activity log","ok"); setTimeout(loadAll,5000);
+    }catch(e){ toast(e.message,"err"); }
+  });
 }
 async function bulkCloseAll(){
   if(!confirm("🚨 Close ALL trades for ALL clients? This is an emergency stop.")) return;
-  try{ await api("/api/bulk/close-all","POST"); toast("Bulk Close All queued — watch the Activity log","ok"); setTimeout(loadAll,5000); }
-  catch(e){ toast(e.message,"err"); }
+  debounced("bulk-close-all", async ()=>{
+    try{
+      const r=await api("/api/bulk/close-all","POST");
+      if(r && r.duplicate){ toast(r.message,"err"); return; }
+      toast("Bulk Close All queued — watch the Activity log","ok"); setTimeout(loadAll,5000);
+    }catch(e){ toast(e.message,"err"); }
+  });
 }
 
 /* ---------- CLIENT DETAIL ---------- */

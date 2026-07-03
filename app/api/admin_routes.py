@@ -313,6 +313,17 @@ async def set_trading(client_id: int, data: dict, db: Session = Depends(get_db),
 # TRADE CONTROLS — QUEUED to the worker (single owner of MetaApi)
 # ─────────────────────────────────────────────────────────────
 def _queue(db, action, actor, client_id=None):
+    # Dedup: if an identical command is already pending/running, don't stack
+    # another. Collapses accidental double/triple clicks into one and avoids
+    # pointless deploy/undeploy churn on the same account.
+    existing = db.query(Command).filter(
+        Command.action == action,
+        Command.client_id == client_id,
+        Command.status.in_(["pending", "running"])).first()
+    if existing:
+        return {"queued": False, "duplicate": True, "command_id": existing.id,
+                "message": "Already queued — please wait for it to finish."}
+
     cmd = Command(action=action, client_id=client_id, requested_by=actor, status="pending")
     db.add(cmd)
     db.commit()
