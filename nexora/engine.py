@@ -13,6 +13,7 @@
 # independently and never mix up.
 
 import asyncio
+import time
 from datetime import datetime
 
 from nexora import config
@@ -155,10 +156,8 @@ class TradeEngine:
     # ============================================================
     async def _wait_for_entry(self, db, sig, clients, connections) -> bool:
         """Poll price until it enters [entry_low, entry_high] or the UTC
-        window expires. Uses the first available connection for price."""
-        symbol = sig.symbol
-        deadline_conn = next(iter(connections.values()))
-
+        window expires. Price is read via any healthy connection, reconnecting
+        stale ones automatically. The window timeout bounds this loop."""
         while True:
             # window check (posted_at is UTC; utcnow is UTC)
             if sig.posted_at:
@@ -166,20 +165,14 @@ class TradeEngine:
                 if elapsed > config.ENTRY_WINDOW_SECONDS:
                     return False
 
-            try:
-                price = await trader.get_price(deadline_conn, symbol)
+            price = await self._price_with_reconnect(sig, connections)
+            if price is not None:
                 ref = price["ask"] if sig.direction == "BUY" else price["bid"]
                 if ref is not None and sig.entry_low <= ref <= sig.entry_high:
                     _log(db, "signal", "entered_zone",
                          f"Price {ref} entered zone [{sig.entry_low}-{sig.entry_high}]",
                          signal_id=sig.id)
                     return True
-            except Exception as e:
-                # price glitch — try another connection next loop
-                print(f"[Engine] price check error: {e}")
-                for conn in connections.values():
-                    deadline_conn = conn
-                    break
 
             await asyncio.sleep(1.5)
 
@@ -237,17 +230,26 @@ class TradeEngine:
     async def _manage_tp1(self, db, sig, clients, connections):
         symbol = sig.symbol
         pending = {c.id: c for c in clients}
+        unhealthy_since = None   # monotonic ts of first continuous connection failure
 
         while pending:
-            # window safety: also stop if all positions already gone
             done_ids = []
-            # find a price source
-            try:
-                any_conn = next(iter(connections.values()))
-                price = await trader.get_price(any_conn, symbol)
-            except Exception:
-                await asyncio.sleep(2)
+
+            # 1) price drives the TP1 decision — reconnect stale connections
+            price = await self._price_with_reconnect(sig, connections)
+            if price is None:
+                # broker unreachable — start/continue the give-up watchdog
+                now = time.monotonic()
+                unhealthy_since = unhealthy_since or now
+                if now - unhealthy_since > config.TP1_GIVEUP_SECONDS:
+                    _log(db, "signal", "tp1_giveup",
+                         "Broker unreachable too long — stopped TP1 management. "
+                         "Open positions remain protected by the broker stop-loss; "
+                         "close manually if needed.", signal_id=sig.id)
+                    break
+                await asyncio.sleep(3)
                 continue
+            unhealthy_since = None   # healthy again
 
             if sig.direction == "BUY":
                 tp1_hit = price["bid"] is not None and price["bid"] >= sig.tp1
@@ -255,10 +257,7 @@ class TradeEngine:
                 tp1_hit = price["ask"] is not None and price["ask"] <= sig.tp1
 
             for cid, client in list(pending.items()):
-                conn = connections.get(client.metaapi_account_id)
-                if not conn:
-                    done_ids.append(cid)
-                    continue
+                acc_id = client.metaapi_account_id
                 group = (db.query(TradeGroup)
                          .filter(TradeGroup.signal_id == sig.id,
                                  TradeGroup.client_id == cid).first())
@@ -266,17 +265,37 @@ class TradeEngine:
                     done_ids.append(cid)
                     continue
 
-                # positions still open for THIS group's unique magic + symbol
-                positions = await self._positions_for_magic(conn, group.magic, symbol)
+                conn = connections.get(acc_id)
+                if conn is None:
+                    continue   # leave pending; watchdog handles persistent failure
+
+                # positions for THIS group's unique magic + symbol.
+                # A fetch error means the connection is stale — NOT that the
+                # positions are gone — so we reconnect and retry, and never
+                # mark the group closed on a fetch failure.
+                try:
+                    positions = await self._positions_for_magic(conn, group.magic, symbol)
+                except Exception:
+                    fresh = await self._safe_reconnect(acc_id, connections)
+                    if fresh is None:
+                        continue   # keep it pending; try again next loop
+                    try:
+                        positions = await self._positions_for_magic(fresh, group.magic, symbol)
+                        conn = fresh
+                    except Exception:
+                        continue
+
                 if not positions:
-                    group.state = "closed"
+                    group.state = "closed"     # genuinely gone (all hit SL, etc.)
                     db.commit()
                     done_ids.append(cid)
                     continue
 
                 if tp1_hit:
-                    await self._close_two_breakeven_one(db, sig, client, conn, positions, group)
-                    done_ids.append(cid)
+                    ok = await self._close_two_breakeven_one(db, sig, client, conn, positions, group)
+                    if ok:
+                        done_ids.append(cid)
+                    # if the close failed (stale mid-close), leave it pending to retry
 
             for cid in done_ids:
                 pending.pop(cid, None)
@@ -284,29 +303,74 @@ class TradeEngine:
             if pending:
                 await asyncio.sleep(2)
 
-    async def _close_two_breakeven_one(self, db, sig, client, conn, positions, group):
-        # keep the last, close the rest
+    async def _close_two_breakeven_one(self, db, sig, client, conn, positions, group) -> bool:
+        """Close all but one position and move the runner to break-even.
+        Returns True only if every step succeeded — the caller retries on False
+        (safe: re-running just finishes whatever is left)."""
         keep = positions[-1]
         to_close = positions[:-1]
+        all_ok = True
         for p in to_close:
-            await trader.close_position(conn, p.get("id"))
-        # break-even the runner: SL = its open price
+            r = await trader.close_position(conn, p.get("id"))
+            if not r.get("success"):
+                all_ok = False
         open_price = keep.get("openPrice")
         if open_price is not None:
-            await trader.modify_position(conn, keep.get("id"),
-                                         sl=open_price, tp=None)
-        group.state = "tp1_done"
-        group.tp1_at = datetime.utcnow()
-        db.commit()
-        _log(db, "trade", "tp1",
-             f"{client.name}: TP1 hit — closed {len(to_close)}, runner at break-even",
-             client_id=client.id, signal_id=sig.id)
+            r = await trader.modify_position(conn, keep.get("id"), sl=open_price, tp=None)
+            if not r.get("success"):
+                all_ok = False
+
+        if all_ok:
+            group.state = "tp1_done"
+            group.tp1_at = datetime.utcnow()
+            db.commit()
+            _log(db, "trade", "tp1",
+                 f"{client.name}: TP1 hit — closed {len(to_close)}, runner at break-even",
+                 client_id=client.id, signal_id=sig.id)
+            return True
+        else:
+            _log(db, "trade", "tp1_retry",
+                 f"{client.name}: TP1 close hit a connection error — will retry",
+                 client_id=client.id, signal_id=sig.id)
+            return False
+
+    # ============================================================
+    # PRICE / RECONNECT HELPERS
+    # ============================================================
+    async def _price_with_reconnect(self, sig, connections):
+        """Return a price from any healthy connection; if all are stale, try
+        reconnecting each once. Returns None if no connection can be reached."""
+        symbol = sig.symbol
+        for conn in list(connections.values()):
+            try:
+                return await trader.get_price(conn, symbol)
+            except Exception:
+                continue
+        for acc_id in list(connections.keys()):
+            fresh = await self._safe_reconnect(acc_id, connections)
+            if fresh is None:
+                continue
+            try:
+                return await trader.get_price(fresh, symbol)
+            except Exception:
+                continue
+        return None
+
+    async def _safe_reconnect(self, account_id, connections):
+        """Rebuild a fresh connection for an already-acquired account."""
+        try:
+            fresh = await deploy_manager.reconnect(account_id)
+            connections[account_id] = fresh
+            return fresh
+        except Exception as e:
+            print(f"[Engine] reconnect {account_id} failed: {e}")
+            return None
 
     async def _positions_for_magic(self, conn, magic, symbol=None):
-        try:
-            positions = await conn.get_positions()
-        except Exception:
-            return []
+        # NOTE: intentionally lets exceptions propagate — a fetch failure means
+        # a stale connection, which the caller handles by reconnecting. It must
+        # NOT be swallowed as "no positions" or a live group would be dropped.
+        positions = await conn.get_positions()
         out = []
         for p in positions:
             if int(p.get("magic", 0) or 0) != int(magic):

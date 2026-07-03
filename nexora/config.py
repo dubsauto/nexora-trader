@@ -55,6 +55,11 @@ ENTRY_WINDOW_SECONDS = _int("ENTRY_WINDOW_SECONDS", 300)
 # Number of positions opened per client per signal.
 POSITIONS_PER_SIGNAL = _int("POSITIONS_PER_SIGNAL", 3)
 
+# If TP1 management can't reach the broker for this long (continuous), give up
+# managing that signal and release the account. Open positions stay protected
+# by the broker-side stop-loss / break-even; user closes manually if needed.
+TP1_GIVEUP_SECONDS = _int("TP1_GIVEUP_SECONDS", 300)
+
 # Base magic number; each signal gets a unique magic derived from this.
 MAGIC_BASE = _int("MAGIC_BASE", 990000)
 

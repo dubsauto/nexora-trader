@@ -60,6 +60,13 @@ class DeployManager:
                 pass
             await account_manager.undeploy(account_id)
 
+    async def reconnect(self, account_id: str):
+        """Return a FRESH RPC connection for an account that is already
+        acquired (reference count unchanged). Use when a held connection has
+        gone stale mid-trade. Assumes the account is still deployed (it is,
+        because we hold a reference), so it rebuilds the RPC connection only."""
+        return await self._connect_with_retry(account_id, attempts=2, delay=5)
+
     def refcount(self, account_id: str) -> int:
         return self._refs.get(account_id, 0)
 
