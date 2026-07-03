@@ -80,7 +80,12 @@ class TelegramListener:
             db.close()
 
     async def poll_once(self) -> int:
-        """Fetch new updates, store new signals. Returns count of new signals."""
+        """Fetch new updates, store new signals.
+
+        Returns the number of new signals on success, or a negative status:
+          -409 -> another poller holds this bot token (conflict)
+          -1   -> other transient error
+        """
         if not self.enabled():
             return 0
 
@@ -96,8 +101,10 @@ class TelegramListener:
                 )
             data = r.json()
             if not data.get("ok"):
+                if data.get("error_code") == 409:
+                    return -409
                 print(f"[Telegram] getUpdates not ok: {data}")
-                return 0
+                return -1
 
             highest = offset
             for upd in data.get("result", []):

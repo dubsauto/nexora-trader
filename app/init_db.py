@@ -8,6 +8,7 @@
 import os
 from datetime import datetime
 
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from app.model import Base, AdminUser
@@ -15,6 +16,25 @@ from app.auth import hash_password
 from app.database import engine
 
 SessionLocal = sessionmaker(bind=engine)
+
+
+# Lightweight, idempotent column additions so existing deployments pick up
+# new columns without a full migration tool. Each ALTER is ignored if the
+# column already exists. (For bigger schema changes, use Alembic.)
+_COLUMN_ADDITIONS = [
+    ("clients", "deposit", "FLOAT DEFAULT 0"),
+]
+
+
+def _ensure_columns():
+    for table, column, ddl in _COLUMN_ADDITIONS:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+            print(f"[init] Added column {table}.{column}")
+        except Exception:
+            # column already exists (or table not created yet) — safe to ignore
+            pass
 
 
 def _seed_admin(db):
@@ -38,6 +58,7 @@ def _seed_admin(db):
 async def init_database():
     print("[init] Initializing NEXORA database...")
     Base.metadata.create_all(bind=engine)
+    _ensure_columns()
     db = SessionLocal()
     try:
         _seed_admin(db)

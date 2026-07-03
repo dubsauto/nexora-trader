@@ -74,6 +74,7 @@ class Client(Base):
     # Trading settings
     lot_size = Column(Float, default=0.01)              # base lot PER position
     risk_profile = Column(String(16), default="balanced")  # conservative/balanced/aggressive
+    deposit = Column(Float, default=0.0)                # deposit amount (admin-entered)
 
     # Unique magic base per client so positions never collide across clients
     magic = Column(Integer, default=0)

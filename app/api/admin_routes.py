@@ -44,6 +44,7 @@ def _client_dict(c: Client) -> dict:
         "trading_enabled": c.trading_enabled,
         "lot_size": c.lot_size,
         "risk_profile": c.risk_profile,
+        "deposit": c.deposit,
         "deploy_state": c.deploy_state,
         "metaapi_account_id": c.metaapi_account_id,
         "provisioned": bool(c.metaapi_account_id),
@@ -85,6 +86,45 @@ async def list_clients(db: Session = Depends(get_db), user=Depends(get_current_u
     return [_client_dict(c) for c in clients]
 
 
+@router.get("/clients/{client_id}")
+async def client_detail(client_id: int, db: Session = Depends(get_db),
+                        user=Depends(get_current_user)):
+    c = db.query(Client).get(client_id)
+    if not c:
+        raise HTTPException(404, "Client not found")
+
+    d = _client_dict(c)
+
+    # last signal on this client's channel
+    last_sig = (db.query(Signal)
+                .filter(Signal.channel == c.channel)
+                .order_by(desc(Signal.created_at)).first())
+    d["last_signal"] = {
+        "direction": last_sig.direction,
+        "entry_low": last_sig.entry_low,
+        "entry_high": last_sig.entry_high,
+        "sl": last_sig.sl,
+        "tp1": last_sig.tp1,
+        "state": last_sig.state,
+        "posted_at": last_sig.posted_at.isoformat() if last_sig.posted_at else None,
+    } if last_sig else None
+
+    # this client's most recent trade group
+    last_group = (db.query(TradeGroup)
+                  .filter(TradeGroup.client_id == c.id)
+                  .order_by(desc(TradeGroup.created_at)).first())
+    d["last_trade"] = {
+        "state": last_group.state,
+        "lot": last_group.lot,
+        "opened_at": last_group.opened_at.isoformat() if last_group.opened_at else None,
+        "tp1_at": last_group.tp1_at.isoformat() if last_group.tp1_at else None,
+    } if last_group else None
+
+    d["risk_multiplier"] = config.risk_multiplier(c.risk_profile)
+    d["effective_lot"] = c.effective_lot(config.risk_multiplier(c.risk_profile))
+    return d
+
+
 @router.post("/clients")
 async def create_client(data: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
     for f in ["name", "login", "password", "server"]:
@@ -105,6 +145,7 @@ async def create_client(data: dict, db: Session = Depends(get_db), user=Depends(
         trading_enabled=True,
         lot_size=float(data.get("lot_size", 0.01)),
         risk_profile=data.get("risk_profile", "balanced"),
+        deposit=float(data.get("deposit", 0) or 0),
     )
     db.add(c)
     db.flush()
@@ -145,6 +186,8 @@ async def update_client(client_id: int, data: dict, db: Session = Depends(get_db
             setattr(c, field, data[field])
     if "lot_size" in data:
         c.lot_size = float(data["lot_size"])
+    if "deposit" in data:
+        c.deposit = float(data["deposit"] or 0)
     if "risk_profile" in data and data["risk_profile"] in config.RISK_MULTIPLIERS:
         c.risk_profile = data["risk_profile"]
     if data.get("password"):
@@ -271,6 +314,36 @@ async def close_runner(client_id: int, user=Depends(get_current_user)):
 @router.post("/clients/{client_id}/close-all")
 async def close_all(client_id: int, user=Depends(get_current_user)):
     return await operations.close_all_for_client(client_id)
+
+
+# ─────────────────────────────────────────────────────────────
+# QUICK ACTIONS (bulk — apply to all clients)
+# ─────────────────────────────────────────────────────────────
+@router.post("/bulk/trading")
+async def bulk_trading(data: dict, db: Session = Depends(get_db),
+                       user=Depends(get_current_user)):
+    enabled = bool(data.get("enabled", True))
+    clients = db.query(Client).all()
+    n = 0
+    for c in clients:
+        if c.trading_enabled != enabled:
+            c.trading_enabled = enabled
+            n += 1
+    db.commit()
+    _log(db, _actor(user), "bulk_trading",
+         f"Trading {'ON' if enabled else 'OFF'} for all clients ({n} changed)")
+    db.commit()
+    return {"success": True, "changed": n, "enabled": enabled}
+
+
+@router.post("/bulk/close-runner")
+async def bulk_close_runner(user=Depends(get_current_user)):
+    return await operations.close_runner_for_all()
+
+
+@router.post("/bulk/close-all")
+async def bulk_close_all(user=Depends(get_current_user)):
+    return await operations.close_all_for_all()
 
 
 # ─────────────────────────────────────────────────────────────

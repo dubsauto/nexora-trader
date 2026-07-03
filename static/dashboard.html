@@ -70,6 +70,9 @@
   .dot.off{ background:var(--muted); }
 
   .actions{ display:flex; gap:5px; flex-wrap:wrap; }
+  .chan-select{ background:#0b121a; color:var(--text); border:1px solid var(--line);
+     border-radius:8px; padding:5px 8px; font-size:12px; font-weight:600; cursor:pointer; }
+  .chan-select:hover{ border-color:var(--cyan); }
   .muted{ color:var(--muted); }
   .mono{ font-family: ui-monospace, monospace; }
 
@@ -109,6 +112,22 @@
 
 <div class="wrap">
   <div class="cards" id="cards"></div>
+
+  <!-- QUICK ACTIONS -->
+  <div class="panel" style="margin-bottom:18px;">
+    <div class="panel-head" style="border-bottom:none;padding-bottom:0;">
+      <div class="t">⚡ Quick Actions</div>
+      <div class="spacer"></div>
+      <span class="muted" style="font-size:12px;">apply to all clients</span>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;padding:14px 16px;">
+      <button class="btn primary" onclick="openCreate()">➕ Add Client</button>
+      <button class="btn green" onclick="bulkTrading(true)">🟢 Trading ON (all)</button>
+      <button class="btn amber" onclick="bulkTrading(false)">🔴 Trading OFF (all)</button>
+      <button class="btn" onclick="bulkCloseRunner()">⚡ Close Runner (all)</button>
+      <button class="btn red" onclick="bulkCloseAll()">🚨 Close All Trades (all)</button>
+    </div>
+  </div>
 
   <div class="tabs">
     <div class="tab active" data-tab="clients" onclick="switchTab('clients')">Clients</div>
@@ -190,12 +209,29 @@
         </select>
       </div>
     </div>
+    <div class="row2">
+      <div class="field"><label>Deposit amount ($)</label><input id="c_deposit" type="number" step="0.01" value="0" placeholder="e.g. 1000"></div>
+      <div class="field"></div>
+    </div>
     <div class="field"><label>Note (optional)</label><input id="c_note" placeholder="internal note"></div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn primary" id="saveBtn" onclick="saveClient()">Save</button>
     </div>
     <div class="muted" id="modalHint" style="font-size:12px;margin-top:10px;"></div>
+  </div>
+</div>
+
+<!-- CLIENT DETAIL MODAL -->
+<div class="modal-bg" id="detailModal">
+  <div class="modal" style="max-width:560px;">
+    <div style="display:flex;align-items:center;">
+      <h3 id="d_title" style="margin:0;">Client</h3>
+      <div class="spacer" style="flex:1;"></div>
+      <button class="btn sm" onclick="document.getElementById('detailModal').classList.remove('show')">✕</button>
+    </div>
+    <div id="d_body" style="margin-top:16px;"></div>
+    <div class="modal-actions" id="d_actions"></div>
   </div>
 </div>
 
@@ -255,29 +291,36 @@ async function loadClients(){
   const body = document.getElementById("clientsBody");
   document.getElementById("clientsEmpty").classList.toggle("hidden", list.length>0);
   body.innerHTML = list.map(c=>{
-    const chCls = c.channel==="vip"?"vip":"trialch";
-    const prov = c.provisioned ? "" : ` <span class="muted" title="${esc(c.connection_note||'')}">&#9888; not provisioned</span>`;
+    const prov = c.provisioned ? "" : ` <span class="muted" title="${esc(c.connection_note||'MetaApi account not created')}">&#9888;</span>`;
+    const isActive = c.status==="active";
+    // Single clear toggle: Activate (green) when off/trial/expired, Deactivate when active.
+    const statusBtn = isActive
+      ? `<button class="btn sm" title="Deactivate — stop this client from trading" onclick="act(${c.id},'deactivate')">Deactivate</button>`
+      : `<button class="btn sm green" title="Activate full license & move to VIP" onclick="activate(${c.id})">Activate</button>`;
+    const trialBtn = isActive ? "" :
+      `<button class="btn sm" title="Start a 3-day free trial (Trial channel)" onclick="act(${c.id},'start-trial')">Start Trial</button>`;
     return `<tr>
-      <td><b>${esc(c.name)}</b>${prov}<br><small class="muted">${esc(c.note||"")}</small></td>
+      <td><b style="cursor:pointer;color:var(--cyan)" title="Open client details" onclick="openDetail(${c.id})">${esc(c.name)}</b>${prov}<br><small class="muted">${esc(c.note||"")}</small></td>
       <td class="mono">${esc(c.login)}<br><small class="muted">${esc(c.server)}</small></td>
       <td><span class="pill ${c.status}">${c.status}</span></td>
-      <td><span class="pill ${chCls}">${c.channel}</span></td>
-      <td><span class="dot ${c.trading_enabled?'on':'off'}"></span></td>
+      <td>
+        <select class="chan-select" title="Switch this client's signal channel" onchange="setChannel(${c.id}, this.value)">
+          <option value="trial" ${c.channel==='trial'?'selected':''}>Trial</option>
+          <option value="vip" ${c.channel==='vip'?'selected':''}>VIP</option>
+        </select>
+      </td>
+      <td><span class="dot ${c.trading_enabled?'on':'off'}" title="${c.trading_enabled?'Trading ON':'Trading OFF'}"></span></td>
       <td class="mono">${c.lot_size}</td>
       <td>${c.risk_profile}</td>
       <td>${expiryText(c)}</td>
       <td><div class="actions">
-        <button class="btn sm" onclick="act(${c.id},'start-trial')">Trial</button>
-        <button class="btn sm green" onclick="activate(${c.id})">Activate</button>
-        ${c.channel==="trial"
-           ? `<button class="btn sm" onclick="setChannel(${c.id},'vip')">&rarr;VIP</button>`
-           : `<button class="btn sm" onclick="setChannel(${c.id},'trial')">&rarr;Trial</button>`}
-        <button class="btn sm amber" onclick="toggleTrading(${c.id},${!c.trading_enabled})">${c.trading_enabled?'Pause':'Resume'}</button>
-        <button class="btn sm" onclick="act(${c.id},'deactivate')">Off</button>
-        <button class="btn sm" onclick="closeRunner(${c.id})">Close Runner</button>
-        <button class="btn sm red" onclick="closeAll(${c.id})">Close All</button>
-        <button class="btn sm" onclick="openEdit(${c.id})">Edit</button>
-        <button class="btn sm red" onclick="del(${c.id})">&times;</button>
+        ${trialBtn}
+        ${statusBtn}
+        <button class="btn sm amber" title="${c.trading_enabled?'Pause trading (keep license)':'Resume trading'}" onclick="toggleTrading(${c.id},${!c.trading_enabled})">${c.trading_enabled?'Pause':'Resume'}</button>
+        <button class="btn sm" title="Close the runner (break-even) position" onclick="closeRunner(${c.id})">Close Runner</button>
+        <button class="btn sm red" title="Close ALL positions for this client" onclick="closeAll(${c.id})">Close All</button>
+        <button class="btn sm" title="Edit client details" onclick="openEdit(${c.id})">Edit</button>
+        <button class="btn sm red" title="Delete client" onclick="del(${c.id})">Delete</button>
       </div></td>
     </tr>`;
   }).join("");
@@ -321,12 +364,82 @@ async function del(id){
   catch(e){ toast(e.message,"err"); }
 }
 
+/* ---------- QUICK ACTIONS (bulk) ---------- */
+async function bulkTrading(enabled){
+  if(!confirm(`Turn trading ${enabled?"ON":"OFF"} for ALL clients?`)) return;
+  try{ const r=await api("/api/bulk/trading","POST",{enabled}); toast(`Trading ${enabled?"ON":"OFF"} — ${r.changed} client(s) changed`,"ok"); loadAll(); }
+  catch(e){ toast(e.message,"err"); }
+}
+async function bulkCloseRunner(){
+  if(!confirm("Close the RUNNER position for ALL clients? (deploys, closes, undeploys each)")) return;
+  toast("Working across all clients… this can take a moment");
+  try{ const r=await api("/api/bulk/close-runner","POST"); toast(`Closed ${r.closed||0} position(s) across ${r.clients||0} client(s)`,"ok"); loadAll(); }
+  catch(e){ toast(e.message,"err"); }
+}
+async function bulkCloseAll(){
+  if(!confirm("🚨 Close ALL trades for ALL clients? This is an emergency stop.")) return;
+  toast("Working across all clients… this can take a moment");
+  try{ const r=await api("/api/bulk/close-all","POST"); toast(`Closed ${r.closed||0} position(s) across ${r.clients||0} client(s)`,"ok"); loadAll(); }
+  catch(e){ toast(e.message,"err"); }
+}
+
+/* ---------- CLIENT DETAIL ---------- */
+async function openDetail(id){
+  let c;
+  try{ c = await api(`/api/clients/${id}`); }
+  catch(e){ toast(e.message,"err"); return; }
+  document.getElementById("d_title").textContent = c.name;
+  const chCls = c.channel==="vip"?"vip":"trialch";
+  const exp = c.status==="trial" ? c.trial_expires_at : (c.status==="active" ? c.license_expires_at : null);
+  const ls = c.last_signal;
+  const row = (label, val) => `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(27,36,48,.6);">
+      <span class="muted" style="font-size:13px;">${label}</span><span style="font-weight:600;">${val}</span></div>`;
+  document.getElementById("d_body").innerHTML =
+    row("MT5 Login", `<span class="mono">${esc(c.login)}</span>`) +
+    row("Broker Server", esc(c.server)) +
+    row("Deposit Amount", `$${(c.deposit||0).toLocaleString()}`) +
+    row("Assigned Lot Size", `<span class="mono">${c.lot_size}</span> &times; ${c.risk_multiplier} = <b>${c.effective_lot}</b>`) +
+    row("Risk Profile", c.risk_profile) +
+    row("License Status", `<span class="pill ${c.status}">${c.status}</span>`) +
+    row("Expiry Date", exp ? fmt(exp) : "—") +
+    row("Telegram Channel", `<span class="pill ${chCls}">${c.channel}</span>`) +
+    row("Trading", c.trading_enabled ? '<span style="color:var(--green)">ON</span>' : '<span class="muted">OFF</span>') +
+    row("MetaApi", c.provisioned ? '<span style="color:var(--green)">provisioned</span>' : `<span class="muted">${esc(c.connection_note||"not provisioned")}</span>`) +
+    row("Last Signal Received", ls
+        ? `<span class="pill ${ls.direction.toLowerCase()}">${ls.direction}</span> ${ls.entry_low}–${ls.entry_high} <span class="muted">(${ls.state}${ls.posted_at? ", "+fmt(ls.posted_at):""})</span>`
+        : "—") +
+    (c.last_trade ? row("Last Trade", `${c.last_trade.state} @ lot ${c.last_trade.lot} <span class="muted">${c.last_trade.opened_at?fmt(c.last_trade.opened_at):""}</span>`) : "");
+  const isActiveD = c.status==="active";
+  const statusBtnD = isActiveD
+    ? `<button class="btn sm" title="Stop this client from trading" onclick="act(${c.id},'deactivate'); closeDetail();">Deactivate</button>`
+    : `<button class="btn sm green" title="Activate full license & move to VIP" onclick="activate(${c.id}); closeDetail();">Activate</button>`;
+  const trialBtnD = isActiveD ? "" :
+    `<button class="btn sm" title="Start a 3-day free trial" onclick="act(${c.id},'start-trial'); closeDetail();">Start Trial</button>`;
+  document.getElementById("d_actions").innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-right:auto;">
+      <span class="muted" style="font-size:12px;">Channel:</span>
+      <select class="chan-select" onchange="setChannel(${c.id}, this.value); closeDetail();">
+        <option value="trial" ${c.channel==='trial'?'selected':''}>Trial</option>
+        <option value="vip" ${c.channel==='vip'?'selected':''}>VIP</option>
+      </select>
+    </div>
+    ${trialBtnD}
+    ${statusBtnD}
+    <button class="btn sm amber" onclick="toggleTrading(${c.id},${!c.trading_enabled}); closeDetail();">${c.trading_enabled?'Pause':'Resume'}</button>
+    <button class="btn sm" onclick="closeRunner(${c.id}); closeDetail();">Close Runner</button>
+    <button class="btn sm red" onclick="closeAll(${c.id}); closeDetail();">Close All</button>
+    <button class="btn sm" onclick="closeDetail(); openEdit(${c.id});">Edit</button>`;
+  document.getElementById("detailModal").classList.add("show");
+}
+function closeDetail(){ document.getElementById("detailModal").classList.remove("show"); }
+
 /* ---------- MODAL ---------- */
 function openCreate(){
   document.getElementById("modalTitle").textContent="Add Client";
   document.getElementById("c_id").value="";
   ["c_name","c_login","c_server","c_password","c_note"].forEach(i=>document.getElementById(i).value="");
   document.getElementById("c_lot").value="0.01";
+  document.getElementById("c_deposit").value="0";
   document.getElementById("c_risk").value="balanced";
   document.getElementById("c_login").disabled=false;
   document.getElementById("modalHint").textContent="A MetaApi account is created automatically when you save.";
@@ -342,6 +455,7 @@ function openEdit(id){
   document.getElementById("c_server").value=c.server||"";
   document.getElementById("c_password").value="";
   document.getElementById("c_lot").value=c.lot_size;
+  document.getElementById("c_deposit").value=c.deposit||0;
   document.getElementById("c_risk").value=c.risk_profile;
   document.getElementById("c_note").value=c.note||"";
   document.getElementById("modalHint").textContent="Leave password blank to keep the current one.";
@@ -357,6 +471,7 @@ async function saveClient(){
     server:document.getElementById("c_server").value.trim(),
     password:document.getElementById("c_password").value,
     lot_size:parseFloat(document.getElementById("c_lot").value)||0.01,
+    deposit:parseFloat(document.getElementById("c_deposit").value)||0,
     risk_profile:document.getElementById("c_risk").value,
     note:document.getElementById("c_note").value.trim(),
   };

@@ -123,6 +123,42 @@ async def close_runner_for_client(client_id: int) -> dict:
     return result
 
 
+async def close_all_for_all() -> dict:
+    """Emergency: Close All for every provisioned client (sequential)."""
+    db = SessionLocal()
+    try:
+        ids = [c.id for c in db.query(Client)
+               .filter(Client.metaapi_account_id.isnot(None)).all()]
+    finally:
+        db.close()
+    total = 0
+    for cid in ids:
+        try:
+            r = await close_all_for_client(cid)
+            total += r.get("closed", 0) or 0
+        except Exception as e:
+            print(f"[Operations] bulk close-all error for {cid}: {e}")
+    return {"success": True, "clients": len(ids), "closed": total}
+
+
+async def close_runner_for_all() -> dict:
+    """Close the runner for every provisioned client (sequential)."""
+    db = SessionLocal()
+    try:
+        ids = [c.id for c in db.query(Client)
+               .filter(Client.metaapi_account_id.isnot(None)).all()]
+    finally:
+        db.close()
+    total = 0
+    for cid in ids:
+        try:
+            r = await close_runner_for_client(cid)
+            total += r.get("closed", 0) or 0
+        except Exception as e:
+            print(f"[Operations] bulk close-runner error for {cid}: {e}")
+    return {"success": True, "clients": len(ids), "closed": total}
+
+
 async def close_all_for_expired():
     """Force-close positions for clients that just expired (opt-in)."""
     db = SessionLocal()

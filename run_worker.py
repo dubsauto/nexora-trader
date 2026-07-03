@@ -32,9 +32,25 @@ async def _telegram_loop():
             await asyncio.sleep(30)
     await listener.prime_offset()
     print("[Worker] Telegram listener running")
+    warned_conflict = False
     while True:
         try:
-            await listener.poll_once()
+            status = await listener.poll_once()
+            if status == -409:
+                if not warned_conflict:
+                    print("[Worker] Telegram 409 CONFLICT — another process is polling "
+                          "this SAME bot token (e.g. the Phase-1 EA, a second worker, or "
+                          "a browser getUpdates). Use a DEDICATED bot for this platform or "
+                          "stop the other poller. Backing off 15s.")
+                    warned_conflict = True
+                await asyncio.sleep(15)
+                continue
+            warned_conflict = False
+            if status < 0:
+                await asyncio.sleep(config.TELEGRAM_POLL_SECONDS)
+                continue
+            # small gap between long-poll cycles
+            await asyncio.sleep(config.TELEGRAM_POLL_SECONDS)
         except Exception as e:
             print(f"[Worker] telegram loop error: {e}")
             await asyncio.sleep(config.TELEGRAM_POLL_SECONDS)
