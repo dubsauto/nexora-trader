@@ -131,6 +131,7 @@
 
   <div class="tabs">
     <div class="tab active" data-tab="clients" onclick="switchTab('clients')">Clients</div>
+    <div class="tab" data-tab="symbols" onclick="switchTab('symbols')">Symbols</div>
     <div class="tab" data-tab="signals" onclick="switchTab('signals')">Signals</div>
     <div class="tab" data-tab="activity" onclick="switchTab('activity')">Activity Log</div>
   </div>
@@ -156,6 +157,27 @@
     </div>
   </div>
 
+  <!-- SYMBOLS -->
+  <div id="tab-symbols" class="hidden">
+    <div class="panel">
+      <div class="panel-head">
+        <div class="t">Tradable Symbols</div>
+        <div class="spacer"></div>
+        <span class="muted" style="font-size:12px;margin-right:10px;">signals are only traded for enabled symbols</span>
+        <button class="btn primary sm" onclick="openSymbolModal()">+ Add Symbol</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr>
+            <th>Symbol (broker name)</th><th>Detected from (aliases)</th><th>Enabled</th><th>Actions</th>
+          </tr></thead>
+          <tbody id="symbolsBody"></tbody>
+        </table>
+      </div>
+      <div class="empty hidden" id="symbolsEmpty">No symbols yet. Add one to start trading its signals.</div>
+    </div>
+  </div>
+
   <!-- SIGNALS -->
   <div id="tab-signals" class="hidden">
     <div class="panel">
@@ -163,7 +185,7 @@
       <div style="overflow-x:auto;">
         <table>
           <thead><tr>
-            <th>Time (UTC)</th><th>Channel</th><th>Dir</th><th>Entry Zone</th>
+            <th>Time (UTC)</th><th>Channel</th><th>Symbol</th><th>Dir</th><th>Entry Zone</th>
             <th>SL</th><th>TP1</th><th>State</th><th>Clients</th>
           </tr></thead>
           <tbody id="signalsBody"></tbody>
@@ -222,6 +244,30 @@
   </div>
 </div>
 
+<!-- SYMBOL MODAL -->
+<div class="modal-bg" id="symbolModal">
+  <div class="modal" style="max-width:440px;">
+    <h3 id="symTitle">Add Symbol</h3>
+    <input type="hidden" id="s_id">
+    <div class="field"><label>Broker symbol name (used to place trades)</label>
+      <input id="s_name" placeholder="e.g. XAUUSD"></div>
+    <div class="field"><label>Aliases — keywords in the signal message (comma separated)</label>
+      <input id="s_aliases" placeholder="e.g. GOLD, XAUUSD"></div>
+    <div class="field" style="display:flex;align-items:center;gap:8px;">
+      <input type="checkbox" id="s_enabled" checked style="width:auto;">
+      <label for="s_enabled" style="margin:0;">Enabled</label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="document.getElementById('symbolModal').classList.remove('show')">Cancel</button>
+      <button class="btn primary" id="symSaveBtn" onclick="saveSymbol()">Save</button>
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:10px;">
+      A signal is matched to a symbol when any alias (or the name) appears in its message.
+      If the broker uses a suffix (e.g. XAUUSD.m), put that exact name here.
+    </div>
+  </div>
+</div>
+
 <!-- CLIENT DETAIL MODAL -->
 <div class="modal-bg" id="detailModal">
   <div class="modal" style="max-width:560px;">
@@ -269,7 +315,7 @@ function logout(){ localStorage.removeItem("token"); location.href="/"; }
 
 function switchTab(name){
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.tab===name));
-  ["clients","signals","activity"].forEach(n=>
+  ["clients","symbols","signals","activity"].forEach(n=>
     document.getElementById("tab-"+n).classList.toggle("hidden", n!==name));
 }
 
@@ -519,6 +565,7 @@ async function loadSignals(){
     <tr>
       <td class="mono">${fmt(s.posted_at||s.created_at)}</td>
       <td><span class="pill ${s.channel==='vip'?'vip':'trialch'}">${s.channel}</span></td>
+      <td class="mono">${esc(s.symbol||"—")}</td>
       <td><span class="pill ${s.direction.toLowerCase()}">${s.direction}</span></td>
       <td class="mono">${s.entry_low} &ndash; ${s.entry_high}</td>
       <td class="mono">${s.sl}</td><td class="mono">${s.tp1}</td>
@@ -544,9 +591,64 @@ async function loadActivity(){
 function esc(s){ return (s==null?"":String(s)).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
 function fmt(iso){ if(!iso) return "—"; return String(iso).replace("T"," ").slice(0,19); }
 
+/* ---------- SYMBOLS ---------- */
+async function loadSymbols(){
+  const rows = await api("/api/symbols");
+  document.getElementById("symbolsEmpty").classList.toggle("hidden", rows.length>0);
+  document.getElementById("symbolsBody").innerHTML = rows.map(s=>`
+    <tr>
+      <td class="mono"><b>${esc(s.name)}</b></td>
+      <td>${(s.aliases||[]).map(a=>`<span class="pill" style="background:rgba(127,144,167,.12);color:var(--muted)">${esc(a)}</span>`).join(" ") || '<span class="muted">—</span>'}</td>
+      <td><span class="dot ${s.enabled?'on':'off'}" title="${s.enabled?'Enabled':'Disabled'}"></span></td>
+      <td><div class="actions">
+        <button class="btn sm ${s.enabled?'amber':'green'}" onclick="toggleSymbol(${s.id},${!s.enabled})">${s.enabled?'Disable':'Enable'}</button>
+        <button class="btn sm" onclick="openSymbolModal(${s.id})">Edit</button>
+        <button class="btn sm red" onclick="delSymbol(${s.id})">Delete</button>
+      </div></td>
+    </tr>`).join("");
+  window._symbols = rows;
+}
+function openSymbolModal(id){
+  const s = id ? (window._symbols||[]).find(x=>x.id===id) : null;
+  document.getElementById("symTitle").textContent = s ? "Edit Symbol" : "Add Symbol";
+  document.getElementById("s_id").value = s ? s.id : "";
+  document.getElementById("s_name").value = s ? s.name : "";
+  document.getElementById("s_aliases").value = s ? (s.aliases_raw||"") : "";
+  document.getElementById("s_enabled").checked = s ? s.enabled : true;
+  document.getElementById("symbolModal").classList.add("show");
+}
+async function saveSymbol(){
+  const id=document.getElementById("s_id").value;
+  const payload={
+    name:document.getElementById("s_name").value.trim(),
+    aliases:document.getElementById("s_aliases").value.trim(),
+    enabled:document.getElementById("s_enabled").checked,
+  };
+  if(!payload.name){ toast("Symbol name is required","err"); return; }
+  const btn=document.getElementById("symSaveBtn"); btn.disabled=true;
+  try{
+    if(id) await api(`/api/symbols/${id}`,"PUT",payload);
+    else await api("/api/symbols","POST",payload);
+    toast("Symbol saved","ok");
+    document.getElementById("symbolModal").classList.remove("show");
+    loadSymbols();
+  }catch(e){ toast(e.message,"err"); }
+  finally{ btn.disabled=false; }
+}
+async function toggleSymbol(id, enabled){
+  try{ await api(`/api/symbols/${id}`,"PUT",{enabled}); toast("Symbol "+(enabled?"enabled":"disabled"),"ok"); loadSymbols(); }
+  catch(e){ toast(e.message,"err"); }
+}
+async function delSymbol(id){
+  const s=(window._symbols||[]).find(x=>x.id===id);
+  if(!confirm(`Delete symbol "${s?s.name:id}"? Signals for it will be ignored.`)) return;
+  try{ await api(`/api/symbols/${id}`,"DELETE"); toast("Symbol deleted","ok"); loadSymbols(); }
+  catch(e){ toast(e.message,"err"); }
+}
+
 async function loadAll(){
   try{
-    await Promise.all([loadStats(), loadClients(), loadSignals(), loadActivity()]);
+    await Promise.all([loadStats(), loadClients(), loadSymbols(), loadSignals(), loadActivity()]);
   }catch(e){ toast(e.message,"err"); }
 }
 

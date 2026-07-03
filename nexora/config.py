@@ -43,9 +43,10 @@ TELEGRAM_POLL_SECONDS = _int("TELEGRAM_POLL_SECONDS", 3)
 # ─────────────────────────────────────────────────────────────
 # Trading / signal rules (mirror the Phase-1 EA)
 # ─────────────────────────────────────────────────────────────
-# Symbol name as it exists on the brokers used by MetaApi.
-# Most MT5 gold symbols are "XAUUSD"; override per deployment if needed.
-TRADE_SYMBOL = os.getenv("TRADE_SYMBOL", "XAUUSD")
+# Tradable symbols are managed in the dashboard (Symbols tab), not here.
+# This default is only used to seed the very first symbol on a fresh DB.
+DEFAULT_SYMBOL = os.getenv("DEFAULT_SYMBOL", "XAUUSD")
+DEFAULT_SYMBOL_ALIASES = os.getenv("DEFAULT_SYMBOL_ALIASES", "GOLD,XAUUSD")
 
 # Minutes allowed for price to enter the entry zone before a signal is
 # discarded (Phase-1 rule = 5 minutes, measured in UTC).
@@ -96,7 +97,6 @@ USE_DEDICATED_IP = os.getenv("USE_DEDICATED_IP", "false").lower() == "true"
 def as_dict() -> dict:
     """Snapshot of non-secret config for the dashboard / logs."""
     return {
-        "trade_symbol": TRADE_SYMBOL,
         "entry_window_seconds": ENTRY_WINDOW_SECONDS,
         "positions_per_signal": POSITIONS_PER_SIGNAL,
         "risk_multipliers": RISK_MULTIPLIERS,

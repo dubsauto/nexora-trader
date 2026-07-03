@@ -44,6 +44,24 @@ def _first_two_numbers(text: str):
     return float(nums[0]), float(nums[1])
 
 
+def detect_symbol(text: str, symbols) -> Optional[str]:
+    """Return the broker symbol name whose alias/name appears in the message.
+
+    `symbols` is an iterable of (name, [aliases]). First match wins, so list
+    more specific symbols first if aliases overlap. Returns None if nothing
+    matches — the caller should then skip the signal (unknown instrument).
+    """
+    if not text:
+        return None
+    up = text.upper()
+    for name, aliases in symbols:
+        candidates = [name] + list(aliases or [])
+        for token in candidates:
+            if token and token.upper() in up:
+                return name
+    return None
+
+
 def parse_signal(text: str) -> Optional[ParsedSignal]:
     """Return a ParsedSignal, or None if the message is not a valid signal."""
     if not text:

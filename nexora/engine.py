@@ -163,7 +163,7 @@ class TradeEngine:
     async def _wait_for_entry(self, db, sig, clients, connections) -> bool:
         """Poll price until it enters [entry_low, entry_high] or the UTC
         window expires. Uses the first available connection for price."""
-        symbol = config.TRADE_SYMBOL
+        symbol = sig.symbol
         deadline_conn = next(iter(connections.values()))
 
         while True:
@@ -194,7 +194,7 @@ class TradeEngine:
     # OPEN 3 POSITIONS FOR ONE CLIENT
     # ============================================================
     async def _open_positions(self, db, sig, client, conn):
-        symbol = config.TRADE_SYMBOL
+        symbol = sig.symbol
         mult = config.risk_multiplier(client.risk_profile)
         lot = client.effective_lot(mult)
         magic = client.magic or (config.MAGIC_BASE + client.id)
@@ -239,7 +239,7 @@ class TradeEngine:
     # TP1 MANAGEMENT — close 2, break-even the 3rd
     # ============================================================
     async def _manage_tp1(self, db, sig, clients, connections):
-        symbol = config.TRADE_SYMBOL
+        symbol = sig.symbol
         pending = {c.id: c for c in clients}
 
         while pending:

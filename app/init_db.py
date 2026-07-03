@@ -11,9 +11,10 @@ from datetime import datetime
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
-from app.model import Base, AdminUser
+from app.model import Base, AdminUser, Symbol
 from app.auth import hash_password
 from app.database import engine
+from nexora import config
 
 SessionLocal = sessionmaker(bind=engine)
 
@@ -23,6 +24,7 @@ SessionLocal = sessionmaker(bind=engine)
 # column already exists. (For bigger schema changes, use Alembic.)
 _COLUMN_ADDITIONS = [
     ("clients", "deposit", "FLOAT DEFAULT 0"),
+    ("signals", "symbol", "VARCHAR(32)"),
 ]
 
 
@@ -55,6 +57,16 @@ def _seed_admin(db):
     print(f"[init] Seeded admin user '{username}'")
 
 
+def _seed_default_symbol(db):
+    if db.query(Symbol).count() > 0:
+        return
+    db.add(Symbol(name=config.DEFAULT_SYMBOL,
+                  aliases=config.DEFAULT_SYMBOL_ALIASES,
+                  enabled=True))
+    db.commit()
+    print(f"[init] Seeded default symbol '{config.DEFAULT_SYMBOL}'")
+
+
 async def init_database():
     print("[init] Initializing NEXORA database...")
     Base.metadata.create_all(bind=engine)
@@ -62,6 +74,7 @@ async def init_database():
     db = SessionLocal()
     try:
         _seed_admin(db)
+        _seed_default_symbol(db)
     finally:
         db.close()
     print("[init] Database ready.")

@@ -121,6 +121,7 @@ class Signal(Base):
     posted_at = Column(DateTime, nullable=True)                 # Telegram post time (UTC)
 
     # Parsed values
+    symbol = Column(String(32), nullable=True)      # broker trading symbol (e.g. XAUUSD)
     direction = Column(String(4), nullable=False)   # BUY/SELL
     entry_low = Column(Float, nullable=False)
     entry_high = Column(Float, nullable=False)
@@ -210,6 +211,26 @@ class Command(Base):
     requested_by = Column(String(64), default="admin")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# =========================================================
+# SYMBOLS (tradable instruments)
+# =========================================================
+# Admin-managed list of symbols the platform trades. Each has a broker
+# trading `name` (e.g. XAUUSD) used to place orders, plus `aliases` — the
+# keywords that may appear in a signal message (e.g. "GOLD,XAUUSD") used to
+# detect which instrument a signal is for.
+class Symbol(Base):
+    __tablename__ = "symbols"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(32), unique=True, nullable=False)   # broker symbol to trade
+    aliases = Column(Text, default="")                       # comma-separated keywords
+    enabled = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def alias_list(self):
+        return [a.strip() for a in (self.aliases or "").split(",") if a.strip()]
 
 
 # =========================================================

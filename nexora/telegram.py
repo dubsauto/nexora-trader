@@ -13,9 +13,15 @@ from datetime import datetime, timezone
 import httpx
 
 from nexora import config
-from nexora.signal_parser import parse_signal
+from nexora.signal_parser import parse_signal, detect_symbol
 from app.database import SessionLocal
-from app.model import Signal, Setting, ActivityLog
+from app.model import Signal, Setting, ActivityLog, Symbol
+
+
+def _enabled_symbols(db):
+    """Return [(name, [aliases]), ...] for enabled symbols."""
+    rows = db.query(Symbol).filter(Symbol.enabled == True).all()  # noqa: E712
+    return [(s.name, s.alias_list()) for s in rows]
 
 _OFFSET_KEY = "tg_offset"
 
@@ -132,6 +138,14 @@ class TelegramListener:
                               f"[{channel}] non-signal message ignored")
                     continue
 
+                # which instrument is this signal for?
+                symbol = detect_symbol(text, _enabled_symbols(db))
+                if not symbol:
+                    self._log(db, "signal", "ignored",
+                              f"[{channel}] signal ignored — symbol not recognized "
+                              f"(add it in the Symbols tab)")
+                    continue
+
                 # dedup
                 exists = db.query(Signal).filter(Signal.update_id == uid).first()
                 if exists:
@@ -142,6 +156,7 @@ class TelegramListener:
                     channel=channel,
                     raw_text=text,
                     posted_at=posted_at,
+                    symbol=symbol,
                     direction=parsed.direction,
                     entry_low=parsed.entry_low,
                     entry_high=parsed.entry_high,
@@ -153,7 +168,7 @@ class TelegramListener:
                 db.flush()
                 sig.magic = config.MAGIC_BASE + (sig.id % 100000)
                 self._log(db, "signal", "received",
-                          f"[{channel}] {parsed.direction} zone "
+                          f"[{channel}] {symbol} {parsed.direction} zone "
                           f"{parsed.entry_low}-{parsed.entry_high} "
                           f"SL {parsed.sl} TP1 {parsed.tp1}",
                           signal_id=sig.id)

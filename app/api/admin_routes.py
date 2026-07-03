@@ -12,7 +12,7 @@ from sqlalchemy import desc
 
 from app.database import get_db
 from app.auth import get_current_user
-from app.model import Client, Signal, TradeGroup, ActivityLog, Command
+from app.model import Client, Signal, TradeGroup, ActivityLog, Command, Symbol
 from app.services.account_management import account_manager
 from nexora import config
 
@@ -392,6 +392,67 @@ async def bulk_close_all(db: Session = Depends(get_db), user=Depends(get_current
 # ─────────────────────────────────────────────────────────────
 # SIGNALS + ACTIVITY
 # ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# SYMBOLS (tradable instruments)
+# ─────────────────────────────────────────────────────────────
+def _symbol_dict(s: Symbol) -> dict:
+    return {"id": s.id, "name": s.name, "aliases": s.alias_list(),
+            "aliases_raw": s.aliases or "", "enabled": s.enabled}
+
+
+@router.get("/symbols")
+async def list_symbols(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    return [_symbol_dict(s) for s in db.query(Symbol).order_by(Symbol.name).all()]
+
+
+@router.post("/symbols")
+async def create_symbol(data: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    name = (data.get("name") or "").strip().upper()
+    if not name:
+        raise HTTPException(400, "Symbol name is required")
+    if db.query(Symbol).filter(Symbol.name == name).first():
+        raise HTTPException(400, "Symbol already exists")
+    aliases = (data.get("aliases") or "").strip()
+    s = Symbol(name=name, aliases=aliases, enabled=bool(data.get("enabled", True)))
+    db.add(s)
+    db.commit()
+    _log(db, _actor(user), "symbol_add", f"Added symbol {name}")
+    db.commit()
+    return _symbol_dict(s)
+
+
+@router.put("/symbols/{symbol_id}")
+async def update_symbol(symbol_id: int, data: dict, db: Session = Depends(get_db),
+                        user=Depends(get_current_user)):
+    s = db.query(Symbol).get(symbol_id)
+    if not s:
+        raise HTTPException(404, "Symbol not found")
+    if "name" in data and data["name"]:
+        s.name = data["name"].strip().upper()
+    if "aliases" in data:
+        s.aliases = (data["aliases"] or "").strip()
+    if "enabled" in data:
+        s.enabled = bool(data["enabled"])
+    db.commit()
+    _log(db, _actor(user), "symbol_update", f"Updated symbol {s.name}")
+    db.commit()
+    return _symbol_dict(s)
+
+
+@router.delete("/symbols/{symbol_id}")
+async def delete_symbol(symbol_id: int, db: Session = Depends(get_db),
+                        user=Depends(get_current_user)):
+    s = db.query(Symbol).get(symbol_id)
+    if not s:
+        raise HTTPException(404, "Symbol not found")
+    name = s.name
+    db.delete(s)
+    db.commit()
+    _log(db, _actor(user), "symbol_delete", f"Deleted symbol {name}")
+    db.commit()
+    return {"success": True}
+
+
 @router.get("/signals")
 async def list_signals(limit: int = 50, db: Session = Depends(get_db),
                        user=Depends(get_current_user)):
@@ -399,6 +460,7 @@ async def list_signals(limit: int = 50, db: Session = Depends(get_db),
     return [{
         "id": s.id,
         "channel": s.channel,
+        "symbol": s.symbol,
         "direction": s.direction,
         "entry_low": s.entry_low,
         "entry_high": s.entry_high,
