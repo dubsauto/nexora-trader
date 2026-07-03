@@ -320,12 +320,19 @@ class TradeEngine:
     # ============================================================
     # CONNECT / UNDEPLOY HELPERS
     # ============================================================
-    async def _connect(self, account_id):
-        try:
-            return await rpc_pool.get_connection(account_id, force=True)
-        except Exception as e:
-            print(f"[Engine] connect {account_id} failed: {e}")
-            return None
+    async def _connect(self, account_id, attempts: int = 3, delay: int = 10):
+        """Build an RPC connection, retrying a few times. After a cold
+        deploy/redeploy the broker sync can need a couple of tries."""
+        last_err = None
+        for i in range(attempts):
+            try:
+                return await rpc_pool.get_connection(account_id, force=True)
+            except Exception as e:
+                last_err = e
+                print(f"[Engine] connect {account_id} attempt {i+1}/{attempts} failed: {e}")
+                if i < attempts - 1:
+                    await asyncio.sleep(delay)
+        raise Exception(str(last_err) if last_err else "connection failed")
 
     async def _undeploy_all(self, connections, db, signal_id):
         for acc_id in list(connections.keys()):

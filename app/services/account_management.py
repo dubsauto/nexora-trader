@@ -101,21 +101,24 @@ class MT5AccountManager:
         except Exception as e:
             return {"success": False, "message": str(e)}
 
-    async def deploy_and_wait(self, account_id: str, timeout: int = 180) -> Dict:
-        """Deploy the account and block until it is DEPLOYED and broker-connected.
-        Used by the trade engine for the on-demand deploy flow."""
+    async def deploy_and_wait(self, account_id: str, timeout: int = 300) -> Dict:
+        """Deploy the account and block until it is DEPLOYED and CONNECTED to the
+        broker. This is the real gate before building an RPC connection — after
+        an undeploy/redeploy the broker can take 30-90s to reconnect, so we wait
+        for wait_connected() rather than racing straight into the RPC sync."""
         try:
             account = await _get_account(account_id)
             if account.state != "DEPLOYED":
                 await account.deploy()
+            # Block until MetaApi reports the account deployed…
             await asyncio.wait_for(account.wait_deployed(), timeout=timeout)
-            try:
-                await asyncio.wait_for(account.wait_connected(), timeout=timeout)
-            except Exception:
-                # Some brokers report DISCONNECTED even when RPC works; the
-                # rpc_pool sync gate is the real check, so don't hard-fail here.
-                pass
+            # …and the broker connection is actually up. This is what was missing.
+            await asyncio.wait_for(account.wait_connected(), timeout=timeout)
             return {"success": True}
+        except asyncio.TimeoutError:
+            return {"success": False,
+                    "message": f"broker did not connect within {timeout}s "
+                               f"(account may be mid-reconnect — retry shortly)"}
         except Exception as e:
             return {"success": False, "message": str(e)}
 
