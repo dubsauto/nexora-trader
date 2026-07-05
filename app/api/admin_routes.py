@@ -12,7 +12,7 @@ from sqlalchemy import desc
 
 from app.database import get_db
 from app.auth import get_current_user
-from app.model import Client, Signal, TradeGroup, ActivityLog, Command, Symbol
+from app.model import Client, Signal, TradeGroup, ActivityLog, Command, Symbol, Setting
 from app.services.account_management import account_manager
 from nexora import config
 
@@ -60,6 +60,31 @@ def _client_dict(c: Client) -> dict:
 @router.get("/config")
 async def get_config(user=Depends(get_current_user)):
     return config.as_dict()
+
+
+@router.get("/listener")
+async def listener_health(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Telegram listener heartbeat for the dashboard health badge."""
+    enabled = bool(config.TELEGRAM_BOT_TOKEN and
+                   (config.TRIAL_CHANNEL_ID or config.VIP_CHANNEL_ID))
+    hb = db.query(Setting).filter(Setting.key == "listener_heartbeat").first()
+    st = db.query(Setting).filter(Setting.key == "listener_status").first()
+    heartbeat = hb.value if hb else None
+    status = st.value if st else None
+
+    age = None
+    healthy = False
+    if heartbeat:
+        try:
+            age = (datetime.utcnow() - datetime.fromisoformat(heartbeat)).total_seconds()
+            # long-poll can be ~28s; allow generous margin before "stale"
+            healthy = age is not None and age < 90 and status != "conflict"
+        except Exception:
+            pass
+
+    return {"enabled": enabled, "heartbeat": heartbeat, "status": status,
+            "age_seconds": round(age) if age is not None else None,
+            "healthy": healthy}
 
 
 @router.get("/stats")

@@ -46,6 +46,28 @@ def _set_offset(db, value: int):
     db.commit()
 
 
+def _set_setting(db, key, value):
+    row = db.query(Setting).filter(Setting.key == key).first()
+    if not row:
+        db.add(Setting(key=key, value=str(value)))
+    else:
+        row.value = str(value)
+
+
+def _write_heartbeat(status: str):
+    """Record that the listener is alive (isolated session so it never
+    interferes with the update-processing transaction)."""
+    db = SessionLocal()
+    try:
+        _set_setting(db, "listener_heartbeat", datetime.utcnow().isoformat())
+        _set_setting(db, "listener_status", status)
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _channel_for_chat(chat_id: str) -> str | None:
     cid = str(chat_id)
     if config.VIP_CHANNEL_ID and cid == str(config.VIP_CHANNEL_ID):
@@ -97,6 +119,7 @@ class TelegramListener:
 
         db = SessionLocal()
         new_signals = 0
+        status = "ok"
         try:
             offset = _get_offset(db)
             async with httpx.AsyncClient(timeout=35) as client:
@@ -108,7 +131,15 @@ class TelegramListener:
             data = r.json()
             if not data.get("ok"):
                 if data.get("error_code") == 409:
+                    status = "conflict"
                     return -409
+                if data.get("error_code") == 429:
+                    retry = int((data.get("parameters") or {}).get("retry_after", 5))
+                    status = "rate_limited"
+                    print(f"[Telegram] rate limited (429) — waiting {retry}s as requested")
+                    await asyncio.sleep(retry)
+                    return -1
+                status = "error"
                 print(f"[Telegram] getUpdates not ok: {data}")
                 return -1
 
@@ -178,10 +209,12 @@ class TelegramListener:
                 _set_offset(db, highest)
             db.commit()
         except Exception as e:
-            print(f"[Telegram] poll error: {e}")
+            status = "error"
+            print(f"[Telegram] poll error: {repr(e)}")
             db.rollback()
         finally:
             db.close()
+            _write_heartbeat(status)   # mark listener alive regardless of outcome
         return new_signals
 
     def _log(self, db, category, action, message, signal_id=None):

@@ -76,6 +76,13 @@
   .search{ background:#0b121a; color:var(--text); border:1px solid var(--line);
      border-radius:9px; padding:7px 12px; font-size:13px; margin-left:16px; width:280px; max-width:45vw; }
   .search:focus{ outline:none; border-color:var(--cyan); }
+  .lbadge{ display:inline-flex; align-items:center; gap:7px; margin-left:16px;
+     padding:5px 11px; border-radius:999px; font-size:12px; font-weight:600;
+     border:1px solid var(--line); background:#0f1620; color:var(--muted); }
+  .lbadge.ok{ color:var(--green); border-color:rgba(46,242,161,.3); }
+  .lbadge.bad{ color:var(--red); border-color:rgba(255,77,94,.3); }
+  .lbadge.warn{ color:var(--amber); border-color:rgba(255,176,32,.3); }
+  .lbadge .dot{ box-shadow:none; }
   .muted{ color:var(--muted); }
   .mono{ font-family: ui-monospace, monospace; }
 
@@ -107,6 +114,9 @@
 
 <div class="top">
   <div class="brand">NEXORA AI TRADER <small>Admin Dashboard</small></div>
+  <span id="listenerBadge" class="lbadge" title="Telegram signal listener status">
+    <span class="dot off"></span> Listener: …
+  </span>
   <div class="spacer"></div>
   <span class="whoami" id="whoami"></span>
   <button class="btn sm" onclick="loadAll()">↻ Refresh</button>
@@ -322,6 +332,21 @@ function switchTab(name){
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.tab===name));
   ["clients","symbols","signals","activity"].forEach(n=>
     document.getElementById("tab-"+n).classList.toggle("hidden", n!==name));
+}
+
+/* ---------- LISTENER HEALTH ---------- */
+async function loadListener(){
+  const b = document.getElementById("listenerBadge");
+  let d;
+  try{ d = await api("/api/listener"); }catch(e){ return; }
+  if(!d) return;
+  let cls="warn", dot="off", txt;
+  if(!d.enabled){ cls="warn"; txt="Listener: not configured"; }
+  else if(d.status==="conflict"){ cls="bad"; dot="off"; txt="Listener: CONFLICT (another poller on this bot)"; }
+  else if(d.healthy){ cls="ok"; dot="on"; txt=`Listener: healthy (${d.age_seconds ?? "?"}s ago)`; }
+  else { cls="bad"; dot="off"; txt=`Listener: no response${d.age_seconds!=null?` (${d.age_seconds}s ago)`:""}`; }
+  b.className = "lbadge "+cls;
+  b.innerHTML = `<span class="dot ${dot}"></span> ${txt}`;
 }
 
 /* ---------- STATS ---------- */
@@ -667,7 +692,7 @@ async function delSymbol(id){
 
 async function loadAll(){
   try{
-    await Promise.all([loadStats(), loadClients(), loadSymbols(), loadSignals(), loadActivity()]);
+    await Promise.all([loadStats(), loadClients(), loadSymbols(), loadSignals(), loadActivity(), loadListener()]);
   }catch(e){ toast(e.message,"err"); }
 }
 
