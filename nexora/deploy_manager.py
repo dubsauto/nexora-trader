@@ -7,6 +7,7 @@
 # account that another signal (or a Close command) is still using.
 
 import asyncio
+import time
 
 from app.services.account_management import account_manager
 from hedgebridge.rpc_pool import rpc_pool
@@ -36,6 +37,8 @@ class DeployManager:
     def __init__(self):
         self._refs: dict[str, int] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._fail_until: dict[str, float] = {}   # account_id -> cooldown expiry (monotonic)
+        self._cooldown_seconds = 120              # skip an account this long after a connect failure
 
     def _lock(self, account_id: str) -> asyncio.Lock:
         if account_id not in self._locks:
@@ -60,12 +63,38 @@ class DeployManager:
         deployed_now = False
         async with self._lock(account_id):
             if self._refs.get(account_id, 0) == 0:
+                # Skip fast if this account failed to connect very recently, so a
+                # down broker isn't re-attempted (and re-deployed) on every signal.
+                until = self._fail_until.get(account_id, 0)
+                if time.monotonic() < until:
+                    raise Exception(
+                        f"account {account_id} in connect cooldown for "
+                        f"{round(until - time.monotonic())}s after a recent failure")
                 dep = await account_manager.deploy_and_wait(account_id)
                 if not dep.get("success"):
+                    self._fail_until[account_id] = time.monotonic() + self._cooldown_seconds
                     raise Exception(dep.get("message", "deploy failed"))
                 deployed_now = True
-            conn = await self._connect_with_retry(account_id)
+            try:
+                conn = await self._connect_with_retry(account_id)
+            except Exception:
+                self._fail_until[account_id] = time.monotonic() + self._cooldown_seconds
+                # Connection failed. If WE deployed the account this call and no
+                # one else holds a reference, undeploy it so it doesn't leak as a
+                # stuck DEPLOYED account (wasting MetaApi cost).
+                if deployed_now and self._refs.get(account_id, 0) == 0:
+                    try:
+                        await rpc_pool.invalidate(account_id)
+                    except Exception:
+                        pass
+                    try:
+                        await account_manager.undeploy(account_id)
+                        print(f"[Deploy] connect failed - undeployed {account_id} (no leak)")
+                    except Exception as e:
+                        print(f"[Deploy] cleanup undeploy failed {account_id}: {e}")
+                raise
             self._refs[account_id] = self._refs.get(account_id, 0) + 1
+            self._fail_until.pop(account_id, None)   # connected fine — clear any cooldown
         if deployed_now:
             _log_account(account_id, "deployed", "account deployed")
         return conn
