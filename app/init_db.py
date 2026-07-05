@@ -26,6 +26,8 @@ _COLUMN_ADDITIONS = [
     ("clients", "deposit", "FLOAT DEFAULT 0"),
     ("signals", "symbol", "VARCHAR(32)"),
     ("admin_users", "email", "VARCHAR(190)"),
+    ("clients", "symbol_overrides", "JSON"),
+    ("clients", "resolved_symbols", "JSON"),
 ]
 
 

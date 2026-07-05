@@ -45,6 +45,8 @@ def _client_dict(c: Client) -> dict:
         "lot_size": c.lot_size,
         "risk_profile": c.risk_profile,
         "deposit": c.deposit,
+        "symbol_overrides": c.symbol_overrides or {},
+        "resolved_symbols": c.resolved_symbols or {},
         "deploy_state": c.deploy_state,
         "metaapi_account_id": c.metaapi_account_id,
         "provisioned": bool(c.metaapi_account_id),
@@ -208,6 +210,7 @@ async def create_client(data: dict, db: Session = Depends(get_db), user=Depends(
         lot_size=float(data.get("lot_size", 0.01)),
         risk_profile=data.get("risk_profile", "balanced"),
         deposit=float(data.get("deposit", 0) or 0),
+        symbol_overrides=data.get("symbol_overrides") or {},
     )
     db.add(c)
     db.flush()
@@ -250,13 +253,20 @@ async def update_client(client_id: int, data: dict, db: Session = Depends(get_db
     if not c:
         raise HTTPException(404, "Client not found")
 
+    old_server = c.server
     for field in ["name", "note", "server"]:
         if field in data and data[field] is not None:
             setattr(c, field, data[field])
+    # Broker changed → the remembered broker-symbol mappings may be wrong; clear
+    # them so they re-detect (takes effect after the next worker cycle/restart).
+    if "server" in data and data["server"] and data["server"] != old_server:
+        c.resolved_symbols = {}
     if "lot_size" in data:
         c.lot_size = float(data["lot_size"])
     if "deposit" in data:
         c.deposit = float(data["deposit"] or 0)
+    if "symbol_overrides" in data:
+        c.symbol_overrides = data["symbol_overrides"] or {}
     if "risk_profile" in data and data["risk_profile"] in config.RISK_MULTIPLIERS:
         c.risk_profile = data["risk_profile"]
     if data.get("password"):

@@ -18,9 +18,10 @@ from datetime import datetime
 
 from nexora import config
 from app.database import SessionLocal
-from app.model import Signal, Client, TradeGroup, ActivityLog
+from app.model import Signal, Client, TradeGroup, ActivityLog, Symbol
 from app.services.trading import trader
 from nexora.deploy_manager import deploy_manager
+from nexora import symbol_resolver
 
 
 def _log(db, category, action, message, client_id=None, signal_id=None):
@@ -105,8 +106,41 @@ class TradeEngine:
                      signal_id=sig.id)
                 return
 
+            # 2b) resolve each broker's actual symbol name for this instrument.
+            # Skip clients whose broker doesn't offer the symbol at all.
+            sym_row = db.query(Symbol).filter(Symbol.name == sig.symbol).first()
+            aliases = sym_row.alias_list() if sym_row else []
+            resolved = {}           # account_id -> broker symbol
+            usable = []
+            for c in active_clients:
+                override = (c.symbol_overrides or {}).get(sig.symbol)
+                bs = await symbol_resolver.resolve_for_account(
+                    connections[c.metaapi_account_id], c.metaapi_account_id,
+                    sig.symbol, aliases, override)
+                if not bs:
+                    _log(db, "client", "symbol_error",
+                         f"{c.name}: '{sig.symbol}' not found on this broker — skipped",
+                         client_id=c.id, signal_id=sig.id)
+                    continue
+                resolved[c.metaapi_account_id] = bs
+                # persist the resolved broker symbol so it's visible on the dashboard
+                rs = dict(c.resolved_symbols or {})
+                if rs.get(sig.symbol) != bs:
+                    rs[sig.symbol] = bs
+                    c.resolved_symbols = rs
+                usable.append(c)
+            db.commit()
+            active_clients = usable
+            if not active_clients:
+                sig.state = "expired"
+                db.commit()
+                _log(db, "signal", "symbol_error",
+                     f"No eligible broker offers '{sig.symbol}' — signal dropped",
+                     signal_id=sig.id)
+                return
+
             # 3) watch entry zone within the 5-minute window
-            filled = await self._wait_for_entry(db, sig, active_clients, connections)
+            filled = await self._wait_for_entry(db, sig, active_clients, connections, resolved)
             if not filled:
                 sig.state = "expired"
                 db.commit()
@@ -117,7 +151,8 @@ class TradeEngine:
 
             # 4) place 3 positions per client (parallel)
             await asyncio.gather(
-                *[self._open_positions(db, sig, c, connections[c.metaapi_account_id])
+                *[self._open_positions(db, sig, c, connections[c.metaapi_account_id],
+                                       resolved[c.metaapi_account_id])
                   for c in active_clients],
                 return_exceptions=True,
             )
@@ -125,7 +160,7 @@ class TradeEngine:
             db.commit()
 
             # 5) manage TP1 for all groups
-            await self._manage_tp1(db, sig, active_clients, connections)
+            await self._manage_tp1(db, sig, active_clients, connections, resolved)
 
             sig.state = "done"
             db.commit()
@@ -154,7 +189,7 @@ class TradeEngine:
     # ============================================================
     # ENTRY ZONE
     # ============================================================
-    async def _wait_for_entry(self, db, sig, clients, connections) -> bool:
+    async def _wait_for_entry(self, db, sig, clients, connections, resolved) -> bool:
         """Poll price until it enters [entry_low, entry_high] or the UTC
         window expires. Price is read via any healthy connection, reconnecting
         stale ones automatically. The window timeout bounds this loop."""
@@ -176,7 +211,7 @@ class TradeEngine:
                              signal_id=sig.id)
                     return False
 
-            price, err = await self._price_or_error(sig, connections)
+            price, err = await self._price_or_error(connections, resolved)
             if price is not None:
                 got_price = True
                 ref = price["ask"] if sig.direction == "BUY" else price["bid"]
@@ -199,8 +234,8 @@ class TradeEngine:
     # ============================================================
     # OPEN 3 POSITIONS FOR ONE CLIENT
     # ============================================================
-    async def _open_positions(self, db, sig, client, conn):
-        symbol = sig.symbol
+    async def _open_positions(self, db, sig, client, conn, broker_symbol):
+        symbol = broker_symbol
         mult = config.risk_multiplier(client.risk_profile)
         lot = client.effective_lot(mult)
 
@@ -247,8 +282,7 @@ class TradeEngine:
     # ============================================================
     # TP1 MANAGEMENT — close 2, break-even the 3rd
     # ============================================================
-    async def _manage_tp1(self, db, sig, clients, connections):
-        symbol = sig.symbol
+    async def _manage_tp1(self, db, sig, clients, connections, resolved):
         pending = {c.id: c for c in clients}
         unhealthy_since = None   # monotonic ts of first continuous connection failure
 
@@ -256,7 +290,7 @@ class TradeEngine:
             done_ids = []
 
             # 1) price drives the TP1 decision — reconnect stale connections
-            price = await self._price_with_reconnect(sig, connections)
+            price = await self._price_with_reconnect(connections, resolved)
             if price is None:
                 # broker unreachable — start/continue the give-up watchdog
                 now = time.monotonic()
@@ -289,18 +323,19 @@ class TradeEngine:
                 if conn is None:
                     continue   # leave pending; watchdog handles persistent failure
 
-                # positions for THIS group's unique magic + symbol.
+                # positions for THIS group's UNIQUE magic (magic alone isolates
+                # the group; broker symbol names vary, so we don't filter by it).
                 # A fetch error means the connection is stale — NOT that the
                 # positions are gone — so we reconnect and retry, and never
                 # mark the group closed on a fetch failure.
                 try:
-                    positions = await self._positions_for_magic(conn, group.magic, symbol)
+                    positions = await self._positions_for_magic(conn, group.magic)
                 except Exception:
                     fresh = await self._safe_reconnect(acc_id, connections)
                     if fresh is None:
                         continue   # keep it pending; try again next loop
                     try:
-                        positions = await self._positions_for_magic(fresh, group.magic, symbol)
+                        positions = await self._positions_for_magic(fresh, group.magic)
                         conn = fresh
                     except Exception:
                         continue
@@ -357,28 +392,33 @@ class TradeEngine:
     # ============================================================
     # PRICE / RECONNECT HELPERS
     # ============================================================
-    async def _price_or_error(self, sig, connections):
-        """Return (price, None) from any healthy connection, or (None, error)
-        with the last error seen — reconnecting stale connections once."""
-        symbol = sig.symbol
+    async def _price_or_error(self, connections, resolved):
+        """Return (price, None) from any healthy connection using that account's
+        resolved broker symbol, or (None, error). Reconnects stale ones once."""
         last = None
-        for conn in list(connections.values()):
+        for acc_id, conn in list(connections.items()):
+            sym = resolved.get(acc_id)
+            if not sym:
+                continue
             try:
-                return await trader.get_price(conn, symbol), None
+                return await trader.get_price(conn, sym), None
             except Exception as e:
                 last = str(e)
         for acc_id in list(connections.keys()):
+            sym = resolved.get(acc_id)
+            if not sym:
+                continue
             fresh = await self._safe_reconnect(acc_id, connections)
             if fresh is None:
                 continue
             try:
-                return await trader.get_price(fresh, symbol), None
+                return await trader.get_price(fresh, sym), None
             except Exception as e:
                 last = str(e)
         return None, last
 
-    async def _price_with_reconnect(self, sig, connections):
-        price, _ = await self._price_or_error(sig, connections)
+    async def _price_with_reconnect(self, connections, resolved):
+        price, _ = await self._price_or_error(connections, resolved)
         return price
 
     async def _safe_reconnect(self, account_id, connections):
@@ -391,19 +431,13 @@ class TradeEngine:
             print(f"[Engine] reconnect {account_id} failed: {e}")
             return None
 
-    async def _positions_for_magic(self, conn, magic, symbol=None):
+    async def _positions_for_magic(self, conn, magic):
         # NOTE: intentionally lets exceptions propagate — a fetch failure means
         # a stale connection, which the caller handles by reconnecting. It must
         # NOT be swallowed as "no positions" or a live group would be dropped.
+        # The per-group unique magic isolates the group on its own.
         positions = await conn.get_positions()
-        out = []
-        for p in positions:
-            if int(p.get("magic", 0) or 0) != int(magic):
-                continue
-            if symbol is not None and p.get("symbol") != symbol:
-                continue
-            out.append(p)
-        return out
+        return [p for p in positions if int(p.get("magic", 0) or 0) == int(magic)]
 
 
 engine = TradeEngine()

@@ -77,6 +77,14 @@ class Client(Base):
     risk_profile = Column(String(16), default="balanced")  # conservative/balanced/aggressive
     deposit = Column(Float, default=0.0)                # deposit amount (admin-entered)
 
+    # Optional per-client symbol overrides for rare brokers the auto-resolver
+    # can't match, e.g. {"XAUUSD": "GOLD.spot", "BTCUSD": "BTC/USD"}.
+    symbol_overrides = Column(JSON, default=dict)
+
+    # Auto-detected broker symbol per instrument, populated by the engine the
+    # first time it trades that instrument for this client (for dashboard view).
+    resolved_symbols = Column(JSON, default=dict)
+
     # Unique magic base per client so positions never collide across clients
     magic = Column(Integer, default=0)
 

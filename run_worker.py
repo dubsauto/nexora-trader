@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from nexora import config
+from nexora import symbol_resolver
 from nexora.telegram import listener
 from nexora.engine import engine
 from nexora.expiry import check_expiries
@@ -96,6 +97,7 @@ async def _command_loop():
 
 async def main():
     await init_database()
+    symbol_resolver.prime_from_db()   # resolve once, remember forever across restarts
     print("[Worker] NEXORA worker starting…")
     await asyncio.gather(
         _telegram_loop(),
