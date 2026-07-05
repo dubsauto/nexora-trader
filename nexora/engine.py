@@ -158,21 +158,41 @@ class TradeEngine:
         """Poll price until it enters [entry_low, entry_high] or the UTC
         window expires. Price is read via any healthy connection, reconnecting
         stale ones automatically. The window timeout bounds this loop."""
+        got_price = False
+        last_err = None
+        warned = False
         while True:
             # window check (posted_at is UTC; utcnow is UTC)
             if sig.posted_at:
                 elapsed = (datetime.utcnow() - sig.posted_at).total_seconds()
                 if elapsed > config.ENTRY_WINDOW_SECONDS:
+                    if not got_price:
+                        # Never read a single price → almost always a wrong/missing
+                        # broker symbol name. Make it visible instead of silent.
+                        _log(db, "signal", "price_error",
+                             f"Window expired but the {sig.symbol} price was never read. "
+                             f"The broker symbol name is likely wrong or the symbol is "
+                             f"not available on the account. Last error: {last_err}",
+                             signal_id=sig.id)
                     return False
 
-            price = await self._price_with_reconnect(sig, connections)
+            price, err = await self._price_or_error(sig, connections)
             if price is not None:
+                got_price = True
                 ref = price["ask"] if sig.direction == "BUY" else price["bid"]
                 if ref is not None and sig.entry_low <= ref <= sig.entry_high:
                     _log(db, "signal", "entered_zone",
                          f"Price {ref} entered zone [{sig.entry_low}-{sig.entry_high}]",
                          signal_id=sig.id)
                     return True
+            else:
+                last_err = err
+                if not warned:
+                    warned = True
+                    _log(db, "signal", "price_error",
+                         f"Cannot read {sig.symbol} price: {err}. If this persists, "
+                         f"correct the broker symbol name in the Symbols tab.",
+                         signal_id=sig.id)
 
             await asyncio.sleep(1.5)
 
@@ -337,24 +357,29 @@ class TradeEngine:
     # ============================================================
     # PRICE / RECONNECT HELPERS
     # ============================================================
-    async def _price_with_reconnect(self, sig, connections):
-        """Return a price from any healthy connection; if all are stale, try
-        reconnecting each once. Returns None if no connection can be reached."""
+    async def _price_or_error(self, sig, connections):
+        """Return (price, None) from any healthy connection, or (None, error)
+        with the last error seen — reconnecting stale connections once."""
         symbol = sig.symbol
+        last = None
         for conn in list(connections.values()):
             try:
-                return await trader.get_price(conn, symbol)
-            except Exception:
-                continue
+                return await trader.get_price(conn, symbol), None
+            except Exception as e:
+                last = str(e)
         for acc_id in list(connections.keys()):
             fresh = await self._safe_reconnect(acc_id, connections)
             if fresh is None:
                 continue
             try:
-                return await trader.get_price(fresh, symbol)
-            except Exception:
-                continue
-        return None
+                return await trader.get_price(fresh, symbol), None
+            except Exception as e:
+                last = str(e)
+        return None, last
+
+    async def _price_with_reconnect(self, sig, connections):
+        price, _ = await self._price_or_error(sig, connections)
+        return price
 
     async def _safe_reconnect(self, account_id, connections):
         """Rebuild a fresh connection for an already-acquired account."""
