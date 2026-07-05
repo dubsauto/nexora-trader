@@ -32,13 +32,20 @@ _COLUMN_ADDITIONS = [
 
 
 def _ensure_columns():
+    is_pg = engine.dialect.name == "postgresql"
     for table, column, ddl in _COLUMN_ADDITIONS:
         try:
             with engine.begin() as conn:
+                # Never let a migration hang the process waiting on a table lock
+                # (the worker can hold a long transaction). Time out fast; the
+                # column will be added on a later boot when the lock is free.
+                if is_pg:
+                    conn.execute(text("SET LOCAL lock_timeout = '5s'"))
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
             print(f"[init] Added column {table}.{column}")
         except Exception:
-            # column already exists (or table not created yet) — safe to ignore
+            # column already exists, table not created yet, or lock timeout —
+            # all safe to skip; it will apply on a subsequent boot if needed.
             pass
 
 
@@ -95,7 +102,8 @@ def _seed_default_symbol(db):
     print(f"[init] Seeded default symbol '{config.DEFAULT_SYMBOL}'")
 
 
-async def init_database():
+def run_init():
+    """Synchronous DB init — create tables, apply column additions, seed rows."""
     print("[init] Initializing NEXORA database...")
     Base.metadata.create_all(bind=engine)
     _ensure_columns()
@@ -107,3 +115,7 @@ async def init_database():
     finally:
         db.close()
     print("[init] Database ready.")
+
+
+async def init_database():
+    run_init()
