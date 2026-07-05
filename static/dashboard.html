@@ -119,6 +119,7 @@
   </span>
   <div class="spacer"></div>
   <span class="whoami" id="whoami"></span>
+  <button class="btn sm" onclick="openAccount()">⚙ Account</button>
   <button class="btn sm" onclick="loadAll()">↻ Refresh</button>
   <button class="btn sm" onclick="logout()">Logout</button>
 </div>
@@ -296,6 +297,21 @@
   </div>
 </div>
 
+<!-- ACCOUNT SETTINGS MODAL -->
+<div class="modal-bg" id="accountModal">
+  <div class="modal">
+    <h3>Account Settings</h3>
+    <div class="field"><label>Username</label><input id="a_username"></div>
+    <div class="field"><label>Email (optional)</label><input id="a_email" type="email" placeholder="you@example.com"></div>
+    <div class="field"><label>New password</label><input id="a_password" type="password" placeholder="leave blank to keep current"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="document.getElementById('accountModal').classList.remove('show')">Cancel</button>
+      <button class="btn primary" id="a_save" onclick="saveAccount()">Save</button>
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:10px;">Changing your password keeps you logged in on this device.</div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -332,6 +348,32 @@ function switchTab(name){
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.tab===name));
   ["clients","symbols","signals","activity"].forEach(n=>
     document.getElementById("tab-"+n).classList.toggle("hidden", n!==name));
+}
+
+/* ---------- ACCOUNT SETTINGS ---------- */
+async function openAccount(){
+  try{
+    const a = await api("/api/account");
+    document.getElementById("a_username").value = a.username || "";
+    document.getElementById("a_email").value = a.email || "";
+    document.getElementById("a_password").value = "";
+    document.getElementById("accountModal").classList.add("show");
+  }catch(e){ toast(e.message,"err"); }
+}
+async function saveAccount(){
+  const payload = {
+    username: document.getElementById("a_username").value.trim(),
+    email: document.getElementById("a_email").value.trim(),
+    password: document.getElementById("a_password").value,
+  };
+  const btn=document.getElementById("a_save"); btn.disabled=true; btn.textContent="Saving...";
+  try{
+    const r = await api("/api/account","PUT",payload);
+    toast("Account updated","ok");
+    document.getElementById("accountModal").classList.remove("show");
+    document.getElementById("whoami").textContent = "Signed in as "+(r.username||"admin");
+  }catch(e){ toast(e.message,"err"); }
+  finally{ btn.disabled=false; btn.textContent="Save"; }
 }
 
 /* ---------- LISTENER HEALTH ---------- */

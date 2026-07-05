@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
 from app.database import get_db
-from app.auth import get_current_user
+from app.auth import get_current_user, hash_password
+from app.model import AdminUser
 from app.model import Client, Signal, TradeGroup, ActivityLog, Command, Symbol, Setting
 from app.services.account_management import account_manager
 from nexora import config
@@ -60,6 +61,43 @@ def _client_dict(c: Client) -> dict:
 @router.get("/config")
 async def get_config(user=Depends(get_current_user)):
     return config.as_dict()
+
+
+# ─────────────────────────────────────────────────────────────
+# ACCOUNT — the logged-in user edits their OWN login only
+# ─────────────────────────────────────────────────────────────
+@router.get("/account")
+async def get_account(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    u = db.query(AdminUser).get(user.get("user_id"))
+    if not u:
+        raise HTTPException(404, "Account not found")
+    return {"username": u.username, "email": u.email, "role": u.role}
+
+
+@router.put("/account")
+async def update_account(data: dict, db: Session = Depends(get_db),
+                         user=Depends(get_current_user)):
+    u = db.query(AdminUser).get(user.get("user_id"))
+    if not u:
+        raise HTTPException(404, "Account not found")
+
+    new_username = (data.get("username") or "").strip()
+    if new_username and new_username != u.username:
+        clash = db.query(AdminUser).filter(AdminUser.username == new_username).first()
+        if clash:
+            raise HTTPException(400, "That username is already taken")
+        u.username = new_username
+
+    if "email" in data:
+        u.email = (data.get("email") or "").strip() or None
+
+    if data.get("password"):
+        if len(data["password"]) < 6:
+            raise HTTPException(400, "Password must be at least 6 characters")
+        u.password_hash = hash_password(data["password"])
+
+    db.commit()
+    return {"success": True, "username": u.username, "email": u.email}
 
 
 @router.get("/listener")

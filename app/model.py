@@ -27,8 +27,9 @@ class AdminUser(Base):
 
     id = Column(Integer, primary_key=True)
     username = Column(String(64), unique=True, nullable=False)
+    email = Column(String(190), nullable=True)
     password_hash = Column(String(255), nullable=False)
-    role = Column(String(16), default="admin")
+    role = Column(String(16), default="admin")   # admin | developer (maintenance)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
