@@ -73,6 +73,9 @@
   .chan-select{ background:#0b121a; color:var(--text); border:1px solid var(--line);
      border-radius:8px; padding:5px 8px; font-size:12px; font-weight:600; cursor:pointer; }
   .chan-select:hover{ border-color:var(--cyan); }
+  .search{ background:#0b121a; color:var(--text); border:1px solid var(--line);
+     border-radius:9px; padding:7px 12px; font-size:13px; margin-left:16px; width:280px; max-width:45vw; }
+  .search:focus{ outline:none; border-color:var(--cyan); }
   .muted{ color:var(--muted); }
   .mono{ font-family: ui-monospace, monospace; }
 
@@ -141,6 +144,8 @@
     <div class="panel">
       <div class="panel-head">
         <div class="t">Clients</div>
+        <input id="clientSearch" class="search" type="text" autocomplete="off"
+               placeholder="Search name, login, server, note…" oninput="renderClients()">
         <div class="spacer"></div>
         <button class="btn primary sm" onclick="openCreate()">+ Add Client</button>
       </div>
@@ -342,9 +347,24 @@ function expiryText(c){
 }
 
 async function loadClients(){
-  const list = await api("/api/clients");
+  window._clients = await api("/api/clients");
+  renderClients();
+}
+
+function renderClients(){
+  const all = window._clients || [];
+  const q = (document.getElementById("clientSearch")?.value || "").trim().toLowerCase();
+  const list = q ? all.filter(c =>
+    [c.name, c.login, c.server, c.note, c.status, c.channel, c.risk_profile]
+      .some(v => (v||"").toString().toLowerCase().includes(q))) : all;
+
   const body = document.getElementById("clientsBody");
-  document.getElementById("clientsEmpty").classList.toggle("hidden", list.length>0);
+  const empty = document.getElementById("clientsEmpty");
+  empty.classList.toggle("hidden", list.length>0);
+  empty.textContent = all.length===0
+    ? "No clients yet. Click “Add Client” to onboard one."
+    : `No clients match “${q}”.`;
+
   body.innerHTML = list.map(c=>{
     const prov = c.provisioned ? "" : ` <span class="muted" title="${esc(c.connection_note||'MetaApi account not created')}">&#9888;</span>`;
     const isActive = c.status==="active";
@@ -379,7 +399,6 @@ async function loadClients(){
       </div></td>
     </tr>`;
   }).join("");
-  window._clients = list;
 }
 
 async function act(id, action){
