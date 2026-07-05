@@ -117,11 +117,18 @@ class TelegramListener:
         if not self.enabled():
             return 0
 
-        db = SessionLocal()
+        # Read the offset in a short session, then do the (up to 25s) long-poll
+        # WITHOUT holding a DB connection open the whole time.
+        db0 = SessionLocal()
+        try:
+            offset = _get_offset(db0)
+        finally:
+            db0.close()
+
         new_signals = 0
         status = "ok"
+        db = None
         try:
-            offset = _get_offset(db)
             async with httpx.AsyncClient(timeout=35) as client:
                 r = await client.get(
                     f"{self._base}/getUpdates",
@@ -129,6 +136,8 @@ class TelegramListener:
                             "allowed_updates": '["channel_post"]'},
                 )
             data = r.json()
+            # open a session only now, to process/store the results
+            db = SessionLocal()
             if not data.get("ok"):
                 if data.get("error_code") == 409:
                     status = "conflict"
@@ -211,9 +220,11 @@ class TelegramListener:
         except Exception as e:
             status = "error"
             print(f"[Telegram] poll error: {repr(e)}")
-            db.rollback()
+            if db is not None:
+                db.rollback()
         finally:
-            db.close()
+            if db is not None:
+                db.close()
             _write_heartbeat(status)   # mark listener alive regardless of outcome
         return new_signals
 

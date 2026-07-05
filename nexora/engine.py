@@ -9,11 +9,14 @@
 #   5. When TP1 is reached, close 2 positions and move the 3rd to break-even.
 #   6. Undeploy all accounts (SL/BE are held broker-side, so this is safe).
 #
-# Each signal is handled in its own asyncio task, so multiple signals run
-# independently and never mix up.
+# Each signal is handled in its own asyncio task. IMPORTANT: DB sessions are
+# SHORT-LIVED — opened, used, and closed for each read/write. A session is NEVER
+# held across an await (deploy, price wait, TP1 loop). Holding a connection for a
+# signal's whole lifecycle exhausted the connection pool and held table locks.
 
 import asyncio
 import time
+from dataclasses import dataclass
 from datetime import datetime
 
 from nexora import config
@@ -24,10 +27,89 @@ from nexora.deploy_manager import deploy_manager
 from nexora import symbol_resolver
 
 
-def _log(db, category, action, message, client_id=None, signal_id=None):
-    db.add(ActivityLog(actor="engine", category=category, action=action,
-                       message=message, client_id=client_id, signal_id=signal_id))
-    db.commit()
+# ─────────────────────────────────────────────────────────────
+# Short-lived DB helpers (each opens + closes its own session)
+# ─────────────────────────────────────────────────────────────
+def _log(category, action, message, client_id=None, signal_id=None):
+    db = SessionLocal()
+    try:
+        db.add(ActivityLog(actor="engine", category=category, action=action,
+                           message=message, client_id=client_id, signal_id=signal_id))
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _set_signal_state(signal_id, state):
+    db = SessionLocal()
+    try:
+        s = db.query(Signal).get(signal_id)
+        if s:
+            s.state = state
+            db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _persist_resolved(client_id, base, broker):
+    db = SessionLocal()
+    try:
+        c = db.query(Client).get(client_id)
+        if c:
+            rs = dict(c.resolved_symbols or {})
+            rs[base] = broker
+            c.resolved_symbols = rs
+            db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _update_group_state(group_id, state, tp1_at=None):
+    db = SessionLocal()
+    try:
+        g = db.query(TradeGroup).get(group_id)
+        if g:
+            g.state = state
+            if tp1_at:
+                g.tp1_at = tp1_at
+            db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+# ─────────────────────────────────────────────────────────────
+# Plain data holders so we never carry ORM objects across awaits
+# ─────────────────────────────────────────────────────────────
+@dataclass
+class SigData:
+    id: int
+    symbol: str
+    direction: str
+    entry_low: float
+    entry_high: float
+    sl: float
+    tp1: float
+    channel: str
+    posted_at: object
+
+
+@dataclass
+class CliData:
+    id: int
+    name: str
+    account_id: str
+    risk_profile: str
+    lot_size: float
+    symbol_overrides: dict
+    resolved_symbols: dict
 
 
 class TradeEngine:
@@ -41,8 +123,7 @@ class TradeEngine:
     async def tick(self):
         db = SessionLocal()
         try:
-            waiting = db.query(Signal).filter(Signal.state == "waiting").all()
-            ids = [s.id for s in waiting]
+            ids = [s.id for s in db.query(Signal).filter(Signal.state == "waiting").all()]
         finally:
             db.close()
 
@@ -57,204 +138,182 @@ class TradeEngine:
     # SIGNAL LIFECYCLE
     # ============================================================
     async def _handle_signal(self, signal_id: int):
-        db = SessionLocal()
-        connections: dict[str, object] = {}   # metaapi_account_id -> connection
+        connections: dict[str, object] = {}   # account_id -> connection
+        resolved: dict[str, str] = {}          # account_id -> broker symbol
         try:
-            sig = db.query(Signal).get(signal_id)
-            if not sig or sig.state != "waiting":
-                return
-
-            # 1) eligible clients
-            clients = db.query(Client).filter(Client.channel == sig.channel).all()
-            eligible = [c for c in clients
-                        if c.is_eligible(sig.channel) and c.metaapi_account_id]
+            # ---- load signal + eligible clients (SHORT session) ----
+            db = SessionLocal()
+            try:
+                sig = db.query(Signal).get(signal_id)
+                if not sig or sig.state != "waiting":
+                    return
+                sd = SigData(sig.id, sig.symbol, sig.direction, sig.entry_low,
+                             sig.entry_high, sig.sl, sig.tp1, sig.channel, sig.posted_at)
+                clients = db.query(Client).filter(Client.channel == sd.channel).all()
+                eligible = [
+                    CliData(c.id, c.name, c.metaapi_account_id, c.risk_profile,
+                            c.lot_size or 0.01, dict(c.symbol_overrides or {}),
+                            dict(c.resolved_symbols or {}))
+                    for c in clients
+                    if c.is_eligible(sd.channel) and c.metaapi_account_id
+                ]
+                sym_row = db.query(Symbol).filter(Symbol.name == sd.symbol).first()
+                aliases = sym_row.alias_list() if sym_row else []
+            finally:
+                db.close()
 
             if not eligible:
-                sig.state = "done"
-                db.commit()
-                _log(db, "signal", "no_clients",
-                     f"No eligible {sig.channel} clients — signal skipped",
-                     signal_id=sig.id)
+                _set_signal_state(signal_id, "done")
+                _log("signal", "no_clients",
+                     f"No eligible {sd.channel} clients — signal skipped", signal_id=signal_id)
                 return
 
-            _log(db, "signal", "processing",
-                 f"{sig.symbol} {sig.direction} {sig.channel} — "
-                 f"{len(eligible)} eligible client(s), deploying",
-                 signal_id=sig.id)
+            _log("signal", "processing",
+                 f"{sd.symbol} {sd.direction} {sd.channel} — "
+                 f"{len(eligible)} eligible client(s), deploying", signal_id=signal_id)
 
-            # 2) acquire (deploy + connect) all accounts in parallel. The
-            #    deploy_manager reference-counts, so accounts shared with other
-            #    concurrent signals are deployed once and undeployed only when
-            #    the last signal releases them.
-            acq_results = await asyncio.gather(
-                *[deploy_manager.acquire(c.metaapi_account_id) for c in eligible],
-                return_exceptions=True,
-            )
-            active_clients = []
-            for c, res in zip(eligible, acq_results):
+            # ---- acquire (deploy + connect) all in parallel ----
+            acq = await asyncio.gather(
+                *[deploy_manager.acquire(c.account_id) for c in eligible],
+                return_exceptions=True)
+            active = []
+            for c, res in zip(eligible, acq):
                 if isinstance(res, Exception) or res is None:
-                    _log(db, "client", "connect_failed",
-                         f"Deploy/connect failed: {res}", client_id=c.id, signal_id=sig.id)
+                    _log("client", "connect_failed",
+                         f"Deploy/connect failed: {res}", client_id=c.id, signal_id=signal_id)
                     continue
-                connections[c.metaapi_account_id] = res   # account_id -> connection
-                active_clients.append(c)
-            if not active_clients:
-                sig.state = "expired"
-                db.commit()
-                _log(db, "signal", "deploy_failed",
+                connections[c.account_id] = res
+                active.append(c)
+            if not active:
+                _set_signal_state(signal_id, "expired")
+                _log("signal", "deploy_failed",
                      "No accounts could be deployed/connected — signal dropped",
-                     signal_id=sig.id)
+                     signal_id=signal_id)
                 return
 
-            # 2b) resolve each broker's actual symbol name for this instrument.
-            # Skip clients whose broker doesn't offer the symbol at all.
-            sym_row = db.query(Symbol).filter(Symbol.name == sig.symbol).first()
-            aliases = sym_row.alias_list() if sym_row else []
-            resolved = {}           # account_id -> broker symbol
+            # ---- resolve each broker's symbol name ----
             usable = []
-            for c in active_clients:
-                override = (c.symbol_overrides or {}).get(sig.symbol)
+            for c in active:
+                override = c.symbol_overrides.get(sd.symbol)
                 bs = await symbol_resolver.resolve_for_account(
-                    connections[c.metaapi_account_id], c.metaapi_account_id,
-                    sig.symbol, aliases, override)
+                    connections[c.account_id], c.account_id, sd.symbol, aliases, override)
                 if not bs:
-                    _log(db, "client", "symbol_error",
-                         f"{c.name}: '{sig.symbol}' not found on this broker — skipped",
-                         client_id=c.id, signal_id=sig.id)
+                    _log("client", "symbol_error",
+                         f"{c.name}: '{sd.symbol}' not found on this broker — skipped",
+                         client_id=c.id, signal_id=signal_id)
                     continue
-                resolved[c.metaapi_account_id] = bs
-                # persist the resolved broker symbol so it's visible on the dashboard
-                rs = dict(c.resolved_symbols or {})
-                if rs.get(sig.symbol) != bs:
-                    rs[sig.symbol] = bs
-                    c.resolved_symbols = rs
+                resolved[c.account_id] = bs
+                if c.resolved_symbols.get(sd.symbol) != bs:
+                    _persist_resolved(c.id, sd.symbol, bs)
                 usable.append(c)
-            db.commit()
-            active_clients = usable
-            if not active_clients:
-                sig.state = "expired"
-                db.commit()
-                _log(db, "signal", "symbol_error",
-                     f"No eligible broker offers '{sig.symbol}' — signal dropped",
-                     signal_id=sig.id)
+            active = usable
+            if not active:
+                _set_signal_state(signal_id, "expired")
+                _log("signal", "symbol_error",
+                     f"No eligible broker offers '{sd.symbol}' — signal dropped",
+                     signal_id=signal_id)
                 return
 
-            # 3) watch entry zone within the 5-minute window
-            filled = await self._wait_for_entry(db, sig, active_clients, connections, resolved)
-            if not filled:
-                sig.state = "expired"
-                db.commit()
-                _log(db, "signal", "window_expired",
+            # ---- watch entry zone (no DB session held) ----
+            if not await self._wait_for_entry(sd, connections, resolved):
+                _set_signal_state(signal_id, "expired")
+                _log("signal", "window_expired",
                      "Price did not enter the zone within the window — discarded",
-                     signal_id=sig.id)
+                     signal_id=signal_id)
                 return
 
-            # 4) place 3 positions per client (parallel)
+            # ---- open 3 positions per client ----
             await asyncio.gather(
-                *[self._open_positions(db, sig, c, connections[c.metaapi_account_id],
-                                       resolved[c.metaapi_account_id])
-                  for c in active_clients],
-                return_exceptions=True,
-            )
-            sig.state = "filled"
-            db.commit()
+                *[self._open_positions(sd, c, connections[c.account_id], resolved[c.account_id])
+                  for c in active],
+                return_exceptions=True)
+            _set_signal_state(signal_id, "filled")
 
-            # 5) manage TP1 for all groups
-            await self._manage_tp1(db, sig, active_clients, connections, resolved)
-
-            sig.state = "done"
-            db.commit()
+            # ---- manage TP1 (no DB session held across the loop) ----
+            await self._manage_tp1(sd, active, connections, resolved)
+            _set_signal_state(signal_id, "done")
 
         except Exception as e:
             print(f"[Engine] signal {signal_id} error: {e}")
         finally:
-            # release every account we acquired (undeploy happens only when the
-            # last concurrent signal on that account releases it)
             for acc_id in list(connections.keys()):
                 try:
                     await deploy_manager.release(acc_id)
                 except Exception as e:
                     print(f"[Engine] release {acc_id} error: {e}")
             if connections:
-                try:
-                    db.rollback()
-                    _log(db, "signal", "released",
-                         f"Released {len(connections)} account(s)", signal_id=signal_id)
-                except Exception:
-                    pass
-            db.close()
+                _log("signal", "released",
+                     f"Released {len(connections)} account(s)", signal_id=signal_id)
             async with self._lock:
                 self._active.discard(signal_id)
 
     # ============================================================
     # ENTRY ZONE
     # ============================================================
-    async def _wait_for_entry(self, db, sig, clients, connections, resolved) -> bool:
-        """Poll price until it enters [entry_low, entry_high] or the UTC
-        window expires. Price is read via any healthy connection, reconnecting
-        stale ones automatically. The window timeout bounds this loop."""
+    async def _wait_for_entry(self, sd, connections, resolved) -> bool:
         got_price = False
         last_err = None
         warned = False
         while True:
-            # window check (posted_at is UTC; utcnow is UTC)
-            if sig.posted_at:
-                elapsed = (datetime.utcnow() - sig.posted_at).total_seconds()
+            if sd.posted_at:
+                elapsed = (datetime.utcnow() - sd.posted_at).total_seconds()
                 if elapsed > config.ENTRY_WINDOW_SECONDS:
                     if not got_price:
-                        # Never read a single price → almost always a wrong/missing
-                        # broker symbol name. Make it visible instead of silent.
-                        _log(db, "signal", "price_error",
-                             f"Window expired but the {sig.symbol} price was never read. "
+                        _log("signal", "price_error",
+                             f"Window expired but the {sd.symbol} price was never read. "
                              f"The broker symbol name is likely wrong or the symbol is "
                              f"not available on the account. Last error: {last_err}",
-                             signal_id=sig.id)
+                             signal_id=sd.id)
                     return False
 
             price, err = await self._price_or_error(connections, resolved)
             if price is not None:
                 got_price = True
-                ref = price["ask"] if sig.direction == "BUY" else price["bid"]
-                if ref is not None and sig.entry_low <= ref <= sig.entry_high:
-                    _log(db, "signal", "entered_zone",
-                         f"Price {ref} entered zone [{sig.entry_low}-{sig.entry_high}]",
-                         signal_id=sig.id)
+                ref = price["ask"] if sd.direction == "BUY" else price["bid"]
+                if ref is not None and sd.entry_low <= ref <= sd.entry_high:
+                    _log("signal", "entered_zone",
+                         f"Price {ref} entered zone [{sd.entry_low}-{sd.entry_high}]",
+                         signal_id=sd.id)
                     return True
             else:
                 last_err = err
                 if not warned:
                     warned = True
-                    _log(db, "signal", "price_error",
-                         f"Cannot read {sig.symbol} price: {err}. If this persists, "
+                    _log("signal", "price_error",
+                         f"Cannot read {sd.symbol} price: {err}. If this persists, "
                          f"correct the broker symbol name in the Symbols tab.",
-                         signal_id=sig.id)
+                         signal_id=sd.id)
 
             await asyncio.sleep(1.5)
 
     # ============================================================
     # OPEN 3 POSITIONS FOR ONE CLIENT
     # ============================================================
-    async def _open_positions(self, db, sig, client, conn, broker_symbol):
-        symbol = broker_symbol
+    async def _open_positions(self, sd, client, conn, broker_symbol):
         mult = config.risk_multiplier(client.risk_profile)
-        lot = client.effective_lot(mult)
+        lot = round((client.lot_size or 0.01) * mult, 2)
 
-        group = TradeGroup(signal_id=sig.id, client_id=client.id, magic=0,
-                           lot=lot, tickets=[], state="open",
-                           opened_at=datetime.utcnow())
-        db.add(group)
-        db.flush()
-        # Unique magic PER GROUP (per client+signal) so concurrent signals on
-        # the same account never collide during TP1 management or closing.
-        magic = config.MAGIC_BASE + group.id
-        group.magic = magic
+        # create the group first (short session) to get a unique per-group magic
+        db = SessionLocal()
+        try:
+            group = TradeGroup(signal_id=sd.id, client_id=client.id, magic=0,
+                               lot=lot, tickets=[], state="open",
+                               opened_at=datetime.utcnow())
+            db.add(group)
+            db.commit()
+            group_id = group.id
+            magic = config.MAGIC_BASE + group_id
+            group.magic = magic
+            db.commit()
+        finally:
+            db.close()
 
-        tickets = []
-        opened = 0
+        # place orders (NO db session held during the network calls)
+        tickets, opened, last_error = [], 0, None
         for i in range(config.POSITIONS_PER_SIGNAL):
-            comment = f"{config.ORDER_COMMENT_PREFIX}_{sig.id}_{i+1}"
-            fn = trader.buy if sig.direction == "BUY" else trader.sell
-            res = await fn(conn, symbol, lot, sl=sig.sl, tp=None,
+            comment = f"{config.ORDER_COMMENT_PREFIX}_{sd.id}_{i+1}"
+            fn = trader.buy if sd.direction == "BUY" else trader.sell
+            res = await fn(conn, broker_symbol, lot, sl=sd.sl, tp=None,
                            comment=comment, magic=magic)
             if res.get("success"):
                 opened += 1
@@ -263,94 +322,98 @@ class TradeEngine:
                 if tid:
                     tickets.append(str(tid))
             else:
-                group.last_error = str(res.get("error"))
+                last_error = str(res.get("error"))
 
-        group.tickets = tickets
+        # record the result (short session)
+        db = SessionLocal()
+        try:
+            g = db.query(TradeGroup).get(group_id)
+            if g:
+                g.tickets = tickets
+                g.state = "closed" if opened == 0 else "open"
+                if last_error:
+                    g.last_error = last_error
+                db.commit()
+        finally:
+            db.close()
+
         if opened == 0:
-            group.state = "closed"
-            db.commit()
-            _log(db, "trade", "open_failed",
-                 f"{client.name}: could not open any position ({group.last_error})",
-                 client_id=client.id, signal_id=sig.id)
+            _log("trade", "open_failed",
+                 f"{client.name}: could not open any position ({last_error})",
+                 client_id=client.id, signal_id=sd.id)
         else:
-            db.commit()
-            _log(db, "trade", "opened",
+            _log("trade", "opened",
                  f"{client.name}: opened {opened}/{config.POSITIONS_PER_SIGNAL} "
-                 f"{sig.direction} @ lot {lot} (magic {magic})",
-                 client_id=client.id, signal_id=sig.id)
+                 f"{sd.direction} @ lot {lot} (magic {magic})",
+                 client_id=client.id, signal_id=sd.id)
 
     # ============================================================
     # TP1 MANAGEMENT — close 2, break-even the 3rd
     # ============================================================
-    async def _manage_tp1(self, db, sig, clients, connections, resolved):
+    async def _manage_tp1(self, sd, clients, connections, resolved):
         pending = {c.id: c for c in clients}
-        unhealthy_since = None   # monotonic ts of first continuous connection failure
+        unhealthy_since = None
 
         while pending:
-            done_ids = []
-
-            # 1) price drives the TP1 decision — reconnect stale connections
             price = await self._price_with_reconnect(connections, resolved)
             if price is None:
-                # broker unreachable — start/continue the give-up watchdog
                 now = time.monotonic()
                 unhealthy_since = unhealthy_since or now
                 if now - unhealthy_since > config.TP1_GIVEUP_SECONDS:
-                    _log(db, "signal", "tp1_giveup",
+                    _log("signal", "tp1_giveup",
                          "Broker unreachable too long — stopped TP1 management. "
                          "Open positions remain protected by the broker stop-loss; "
-                         "close manually if needed.", signal_id=sig.id)
+                         "close manually if needed.", signal_id=sd.id)
                     break
                 await asyncio.sleep(3)
                 continue
-            unhealthy_since = None   # healthy again
+            unhealthy_since = None
 
-            if sig.direction == "BUY":
-                tp1_hit = price["bid"] is not None and price["bid"] >= sig.tp1
+            if sd.direction == "BUY":
+                tp1_hit = price["bid"] is not None and price["bid"] >= sd.tp1
             else:
-                tp1_hit = price["ask"] is not None and price["ask"] <= sig.tp1
+                tp1_hit = price["ask"] is not None and price["ask"] <= sd.tp1
 
+            # snapshot current group states (short session)
+            db = SessionLocal()
+            try:
+                groups = {g.client_id: {"id": g.id, "magic": g.magic, "state": g.state}
+                          for g in db.query(TradeGroup)
+                          .filter(TradeGroup.signal_id == sd.id).all()}
+            finally:
+                db.close()
+
+            done_ids = []
             for cid, client in list(pending.items()):
-                acc_id = client.metaapi_account_id
-                group = (db.query(TradeGroup)
-                         .filter(TradeGroup.signal_id == sig.id,
-                                 TradeGroup.client_id == cid).first())
-                if not group or group.state != "open":
+                g = groups.get(cid)
+                if not g or g["state"] != "open":
                     done_ids.append(cid)
                     continue
-
-                conn = connections.get(acc_id)
+                conn = connections.get(client.account_id)
                 if conn is None:
-                    continue   # leave pending; watchdog handles persistent failure
+                    continue
 
-                # positions for THIS group's UNIQUE magic (magic alone isolates
-                # the group; broker symbol names vary, so we don't filter by it).
-                # A fetch error means the connection is stale — NOT that the
-                # positions are gone — so we reconnect and retry, and never
-                # mark the group closed on a fetch failure.
                 try:
-                    positions = await self._positions_for_magic(conn, group.magic)
+                    positions = await self._positions_for_magic(conn, g["magic"])
                 except Exception:
-                    fresh = await self._safe_reconnect(acc_id, connections)
+                    fresh = await self._safe_reconnect(client.account_id, connections)
                     if fresh is None:
-                        continue   # keep it pending; try again next loop
+                        continue
                     try:
-                        positions = await self._positions_for_magic(fresh, group.magic)
+                        positions = await self._positions_for_magic(fresh, g["magic"])
                         conn = fresh
                     except Exception:
                         continue
 
                 if not positions:
-                    group.state = "closed"     # genuinely gone (all hit SL, etc.)
-                    db.commit()
+                    _update_group_state(g["id"], "closed")
                     done_ids.append(cid)
                     continue
 
                 if tp1_hit:
-                    ok = await self._close_two_breakeven_one(db, sig, client, conn, positions, group)
+                    ok = await self._close_two_breakeven_one(sd, client, conn, positions, g["id"])
                     if ok:
                         done_ids.append(cid)
-                    # if the close failed (stale mid-close), leave it pending to retry
 
             for cid in done_ids:
                 pending.pop(cid, None)
@@ -358,10 +421,7 @@ class TradeEngine:
             if pending:
                 await asyncio.sleep(2)
 
-    async def _close_two_breakeven_one(self, db, sig, client, conn, positions, group) -> bool:
-        """Close all but one position and move the runner to break-even.
-        Returns True only if every step succeeded — the caller retries on False
-        (safe: re-running just finishes whatever is left)."""
+    async def _close_two_breakeven_one(self, sd, client, conn, positions, group_id) -> bool:
         keep = positions[-1]
         to_close = positions[:-1]
         all_ok = True
@@ -376,25 +436,20 @@ class TradeEngine:
                 all_ok = False
 
         if all_ok:
-            group.state = "tp1_done"
-            group.tp1_at = datetime.utcnow()
-            db.commit()
-            _log(db, "trade", "tp1",
+            _update_group_state(group_id, "tp1_done", tp1_at=datetime.utcnow())
+            _log("trade", "tp1",
                  f"{client.name}: TP1 hit — closed {len(to_close)}, runner at break-even",
-                 client_id=client.id, signal_id=sig.id)
+                 client_id=client.id, signal_id=sd.id)
             return True
-        else:
-            _log(db, "trade", "tp1_retry",
-                 f"{client.name}: TP1 close hit a connection error — will retry",
-                 client_id=client.id, signal_id=sig.id)
-            return False
+        _log("trade", "tp1_retry",
+             f"{client.name}: TP1 close hit a connection error — will retry",
+             client_id=client.id, signal_id=sd.id)
+        return False
 
     # ============================================================
     # PRICE / RECONNECT HELPERS
     # ============================================================
     async def _price_or_error(self, connections, resolved):
-        """Return (price, None) from any healthy connection using that account's
-        resolved broker symbol, or (None, error). Reconnects stale ones once."""
         last = None
         for acc_id, conn in list(connections.items()):
             sym = resolved.get(acc_id)
@@ -422,7 +477,6 @@ class TradeEngine:
         return price
 
     async def _safe_reconnect(self, account_id, connections):
-        """Rebuild a fresh connection for an already-acquired account."""
         try:
             fresh = await deploy_manager.reconnect(account_id)
             connections[account_id] = fresh
@@ -432,10 +486,8 @@ class TradeEngine:
             return None
 
     async def _positions_for_magic(self, conn, magic):
-        # NOTE: intentionally lets exceptions propagate — a fetch failure means
-        # a stale connection, which the caller handles by reconnecting. It must
-        # NOT be swallowed as "no positions" or a live group would be dropped.
-        # The per-group unique magic isolates the group on its own.
+        # Lets exceptions propagate — a fetch failure means a stale connection
+        # (caller reconnects); it must NOT be read as "no positions".
         positions = await conn.get_positions()
         return [p for p in positions if int(p.get("magic", 0) or 0) == int(magic)]
 
