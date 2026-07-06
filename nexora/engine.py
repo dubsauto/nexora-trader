@@ -31,6 +31,9 @@ from nexora import symbol_resolver
 # Short-lived DB helpers (each opens + closes its own session)
 # ─────────────────────────────────────────────────────────────
 def _log(category, action, message, client_id=None, signal_id=None):
+    # Print to stdout (visible in Render logs) AND persist to the Activity log.
+    sig = f" sig#{signal_id}" if signal_id else ""
+    print(f"[Engine]{sig} {category}/{action}: {message}", flush=True)
     db = SessionLocal()
     try:
         db.add(ActivityLog(actor="engine", category=category, action=action,
@@ -40,6 +43,11 @@ def _log(category, action, message, client_id=None, signal_id=None):
         db.rollback()
     finally:
         db.close()
+
+
+def _p(msg):
+    """Lightweight stdout print for step-by-step tracing in Render logs."""
+    print(f"[Engine] {msg}", flush=True)
 
 
 def _set_signal_state(signal_id, state):
@@ -132,6 +140,7 @@ class TradeEngine:
                 if sid in self._active:
                     continue
                 self._active.add(sid)
+            _p(f"picking up signal #{sid}")
             asyncio.create_task(self._handle_signal(sid))
 
     # ============================================================
@@ -184,6 +193,8 @@ class TradeEngine:
                     continue
                 connections[c.account_id] = res
                 active.append(c)
+                _p(f"sig#{signal_id} connected {c.name} ({c.account_id})")
+            _p(f"sig#{signal_id} {len(active)}/{len(eligible)} account(s) connected")
             if not active:
                 _set_signal_state(signal_id, "expired")
                 _log("signal", "deploy_failed",
@@ -203,6 +214,7 @@ class TradeEngine:
                          client_id=c.id, signal_id=signal_id)
                     continue
                 resolved[c.account_id] = bs
+                _p(f"sig#{signal_id} {c.name}: '{sd.symbol}' -> broker symbol '{bs}'")
                 if c.resolved_symbols.get(sd.symbol) != bs:
                     _persist_resolved(c.id, sd.symbol, bs)
                 usable.append(c)
@@ -254,6 +266,9 @@ class TradeEngine:
         got_price = False
         last_err = None
         warned = False
+        last_print = 0.0
+        _p(f"sig#{sd.id} watching entry zone [{sd.entry_low}-{sd.entry_high}] for up to "
+           f"{config.ENTRY_WINDOW_SECONDS}s")
         while True:
             if sd.posted_at:
                 elapsed = (datetime.utcnow() - sd.posted_at).total_seconds()
@@ -267,9 +282,14 @@ class TradeEngine:
                     return False
 
             price, err = await self._price_or_error(connections, resolved)
+            now = time.monotonic()
             if price is not None:
                 got_price = True
                 ref = price["ask"] if sd.direction == "BUY" else price["bid"]
+                if now - last_print > 8:
+                    last_print = now
+                    _p(f"sig#{sd.id} {sd.symbol} price {ref} | zone [{sd.entry_low}-{sd.entry_high}] "
+                       f"| waiting to enter")
                 if ref is not None and sd.entry_low <= ref <= sd.entry_high:
                     _log("signal", "entered_zone",
                          f"Price {ref} entered zone [{sd.entry_low}-{sd.entry_high}]",
@@ -277,6 +297,9 @@ class TradeEngine:
                     return True
             else:
                 last_err = err
+                if now - last_print > 8:
+                    last_print = now
+                    _p(f"sig#{sd.id} {sd.symbol} price unavailable: {err}")
                 if not warned:
                     warned = True
                     _log("signal", "price_error",
@@ -353,9 +376,16 @@ class TradeEngine:
     async def _manage_tp1(self, sd, clients, connections, resolved):
         pending = {c.id: c for c in clients}
         unhealthy_since = None
+        last_print = 0.0
+        _p(f"sig#{sd.id} managing TP1 at {sd.tp1} for {len(pending)} client(s)")
 
         while pending:
             price = await self._price_with_reconnect(connections, resolved)
+            now = time.monotonic()
+            if price is not None and now - last_print > 8:
+                last_print = now
+                cur = price["bid"] if sd.direction == "BUY" else price["ask"]
+                _p(f"sig#{sd.id} {sd.symbol} price {cur} | TP1 {sd.tp1} | {len(pending)} runner(s) pending")
             if price is None:
                 now = time.monotonic()
                 unhealthy_since = unhealthy_since or now

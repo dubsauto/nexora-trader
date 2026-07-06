@@ -229,6 +229,7 @@ class TelegramListener:
         return new_signals
 
     def _log(self, db, category, action, message, signal_id=None):
+        print(f"[Telegram] {category}/{action}: {message}", flush=True)
         db.add(ActivityLog(actor="engine", category=category,
                            action=action, message=message, signal_id=signal_id))
 
