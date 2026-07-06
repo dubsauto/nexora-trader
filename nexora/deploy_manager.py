@@ -54,6 +54,16 @@ class DeployManager:
                 last = e
                 print(f"[Deploy] connect {account_id} attempt {i+1}/{attempts} failed: {e}")
                 if i < attempts - 1:
+                    # Repeated build timeouts usually mean the SDK's websocket
+                    # layer went stale (the thing only a process restart used to
+                    # fix). Before the FINAL attempt, refresh the SDK so the last
+                    # try runs on a brand-new client — self-healing, no restart.
+                    if i == attempts - 2:
+                        try:
+                            if await rpc_pool.reset_sdk_after_failures():
+                                print(f"[Deploy] SDK refreshed - retrying {account_id} on fresh client")
+                        except Exception as re:
+                            print(f"[Deploy] SDK refresh failed (continuing): {re}")
                     await asyncio.sleep(delay)
         raise Exception(str(last) if last else "connection failed")
 

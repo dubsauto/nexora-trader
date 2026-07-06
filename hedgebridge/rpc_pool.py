@@ -1,6 +1,7 @@
 # hedgebridge/rpc_pool.py
 
 import asyncio
+import gc
 import time
 from typing import Optional, Dict, Any
 from hedgebridge.api_client import get_metaapi_client, reset_metaapi_client
@@ -45,6 +46,11 @@ class RpcConnectionPool:
         self._hard_reset_times: list = []
         self._sdk_reset_window = 300
         self._sdk_reset_threshold = 5
+
+        # Rate limit for externally-requested SDK resets (deploy_manager calls
+        # this when fresh connection builds keep timing out).
+        self._last_sdk_reset = 0.0
+        self._sdk_reset_min_interval = 60
 
         # Limit simultaneous connection builds to avoid overloading 0.5 CPU
         self._build_semaphore = asyncio.Semaphore(2)
@@ -171,8 +177,63 @@ class RpcConnectionPool:
                             await asyncio.wait_for(result, timeout=10)
                         print("[RpcPool] Old SDK instance closed cleanly")
                 except Exception as e:
-                    # Non-fatal — GC will eventually collect it
+                    # Non-fatal — the purge below still drops our references
                     print(f"[RpcPool] Old SDK close error (non-critical): {e}")
+
+            # MEMORY: everything cached from the old SDK (account objects, RPC
+            # connections, in-flight builds) keeps its whole object graph —
+            # websocket buffers, subscription state — reachable. Purge it all,
+            # drop our last reference, and collect immediately so each reset
+            # returns its memory instead of stacking dead SDKs.
+            await self._purge_all_stale_state()
+            del old
+            gc.collect()
+            print("[RpcPool] Old SDK memory released")
+
+    async def _purge_all_stale_state(self):
+        """Drop every cached object built on a replaced SDK instance.
+
+        Called from _reset_sdk_safely (lock held). Dicts are cleared BEFORE the
+        (awaiting) connection closes, so connections built on the NEW SDK by
+        concurrent coroutines during the closes are not wiped by mistake.
+        """
+        for task in list(self._build_tasks.values()):
+            if not task.done():
+                task.cancel()
+        self._build_tasks.clear()
+
+        conns = list(self._connections.items())
+        self._connections.clear()
+        self._accounts.clear()          # account objects reference the old SDK
+        self._verified_at.clear()
+        self._failure_count.clear()
+        self._last_used.clear()
+        # cooldown timestamps are plain floats — keep them, still meaningful
+
+        if conns:
+            await asyncio.gather(
+                *[self._close_connection_safely(c, acc_id) for acc_id, c in conns],
+                return_exceptions=True,
+            )
+            print(f"[RpcPool] Purged {len(conns)} stale connection(s) after SDK reset")
+
+    async def reset_sdk_after_failures(self) -> bool:
+        """
+        Public, rate-limited SDK reset for the connection-BUILD path.
+
+        The internal reset triggers only fire on probe failures of EXISTING
+        connections — brand-new builds that time out (wait_synchronized) never
+        reached them, so a stale SDK could block every deploy until a process
+        restart. deploy_manager calls this after repeated build failures so the
+        worker heals itself instead. Returns True if a reset was performed.
+        """
+        now = time.monotonic()
+        if now - self._last_sdk_reset < self._sdk_reset_min_interval:
+            return False
+        self._last_sdk_reset = now
+        print("[RpcPool] Repeated connection-build failures — refreshing MetaApi SDK")
+        await self._reset_sdk_safely(stale_instance=self._api)
+        return True
 
     async def _maybe_reset_sdk(self):
         """Trigger a full SDK reset once enough hard-resets have accumulated."""

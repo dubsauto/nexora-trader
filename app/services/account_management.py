@@ -9,14 +9,12 @@ from typing import Optional, Dict
 
 from hedgebridge.api_client import get_metaapi_client
 
-# Shared SDK instance for admin calls only (no RPC connections)
-_api = None
-
 def _get_admin_api():
-    global _api
-    if _api is None:
-        _api = get_metaapi_client()
-    return _api
+    # Always fetch the CURRENT singleton from api_client — never cache a local
+    # copy. A cached reference would (a) pin a replaced/stale SDK in memory
+    # forever after a reset and (b) keep routing deploy/undeploy through the
+    # dead client. api_client already holds the singleton, so this is free.
+    return get_metaapi_client()
 
 
 async def _get_account(account_id: str):
