@@ -132,6 +132,7 @@ class Signal(Base):
     # Parsed values
     symbol = Column(String(32), nullable=True)      # broker trading symbol (e.g. XAUUSD)
     direction = Column(String(4), nullable=False)   # BUY/SELL
+    immediate = Column(Boolean, default=False)      # BUY NOW/SELL NOW -> market entry
     entry_low = Column(Float, nullable=False)
     entry_high = Column(Float, nullable=False)
     sl = Column(Float, nullable=False)

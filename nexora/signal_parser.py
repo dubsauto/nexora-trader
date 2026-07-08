@@ -22,11 +22,15 @@ from typing import Optional
 
 @dataclass
 class ParsedSignal:
-    direction: str          # "BUY" | "SELL"
-    entry_low: float
-    entry_high: float
+    direction: str              # "BUY" | "SELL"
+    entry_low: float            # 0 for immediate (market) signals
+    entry_high: float           # 0 for immediate (market) signals
     sl: float
     tp1: float
+    immediate: bool = False     # BUY NOW / SELL NOW -> open at market immediately
+
+
+_NOW_RE = re.compile(r"\b(BUY|SELL)\s+NOW\b")
 
 
 _NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
@@ -63,11 +67,41 @@ def detect_symbol(text: str, symbols) -> Optional[str]:
 
 
 def parse_signal(text: str) -> Optional[ParsedSignal]:
-    """Return a ParsedSignal, or None if the message is not a valid signal."""
+    """Return a ParsedSignal, or None if the message is not a valid signal.
+
+    Two shapes are supported:
+      - Zone signal:  Entry: A – B  +  SL  +  Targets  (wait for price in zone)
+      - Market signal: "BUY NOW" / "SELL NOW"  +  SL  +  Targets  (open at once,
+        no Entry line).
+    """
     if not text:
         return None
 
     upper = text.upper()
+
+    # --- immediate (market) signal? ---------------------------------------
+    now_match = _NOW_RE.search(upper)
+    if now_match:
+        direction = now_match.group(1)   # "BUY" or "SELL"
+        s_idx = upper.find("SL:")
+        t_idx = upper.find("TARGET")
+        if s_idx == -1 or t_idx == -1 or not (s_idx < t_idx):
+            return None
+        sl = _first_number(text[s_idx + len("SL:"):t_idx])
+        tgt_part = text[t_idx:]
+        colon = tgt_part.find(":")
+        if colon != -1:
+            tgt_part = tgt_part[colon + 1:]
+        tp1 = _first_number(tgt_part)
+        if sl is None or tp1 is None or sl <= 0 or tp1 <= 0:
+            return None
+        # sanity: SL protects the correct side (SELL: SL above TP; BUY: SL below TP)
+        if direction == "SELL" and not (sl > tp1):
+            return None
+        if direction == "BUY" and not (sl < tp1):
+            return None
+        return ParsedSignal(direction=direction, entry_low=0.0, entry_high=0.0,
+                            sl=sl, tp1=tp1, immediate=True)
 
     # --- direction ---------------------------------------------------------
     if "SELL" in upper:

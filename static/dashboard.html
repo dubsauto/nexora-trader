@@ -658,8 +658,8 @@ async function loadSignals(){
       <td class="mono">${fmt(s.posted_at||s.created_at)}</td>
       <td><span class="pill ${s.channel==='vip'?'vip':'trialch'}">${s.channel}</span></td>
       <td class="mono">${esc(s.symbol||"—")}</td>
-      <td><span class="pill ${s.direction.toLowerCase()}">${s.direction}</span></td>
-      <td class="mono">${s.entry_low} &ndash; ${s.entry_high}</td>
+      <td><span class="pill ${s.direction.toLowerCase()}">${s.direction}${s.immediate?' NOW':''}</span></td>
+      <td class="mono">${s.immediate?'<span style="color:var(--amber)">MARKET</span>':`${s.entry_low} &ndash; ${s.entry_high}`}</td>
       <td class="mono">${s.sl}</td><td class="mono">${s.tp1}</td>
       <td>${s.state}</td><td>${s.groups}</td>
     </tr>`).join("");

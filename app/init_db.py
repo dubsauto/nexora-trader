@@ -28,6 +28,7 @@ _COLUMN_ADDITIONS = [
     ("admin_users", "email", "VARCHAR(190)"),
     ("clients", "symbol_overrides", "JSON"),
     ("clients", "resolved_symbols", "JSON"),
+    ("signals", "immediate", "BOOLEAN DEFAULT FALSE"),
 ]
 
 

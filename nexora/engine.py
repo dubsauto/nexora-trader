@@ -107,6 +107,7 @@ class SigData:
     tp1: float
     channel: str
     posted_at: object
+    immediate: bool = False
 
 
 @dataclass
@@ -157,7 +158,8 @@ class TradeEngine:
                 if not sig or sig.state != "waiting":
                     return
                 sd = SigData(sig.id, sig.symbol, sig.direction, sig.entry_low,
-                             sig.entry_high, sig.sl, sig.tp1, sig.channel, sig.posted_at)
+                             sig.entry_high, sig.sl, sig.tp1, sig.channel,
+                             sig.posted_at, bool(sig.immediate))
                 clients = db.query(Client).filter(Client.channel == sd.channel).all()
                 eligible = [
                     CliData(c.id, c.name, c.metaapi_account_id, c.risk_profile,
@@ -226,8 +228,10 @@ class TradeEngine:
                      signal_id=signal_id)
                 return
 
-            # ---- watch entry zone (no DB session held) ----
-            if not await self._wait_for_entry(sd, connections, resolved):
+            # ---- entry: immediate (market) opens right away; zone signals wait ----
+            if sd.immediate:
+                _p(f"sig#{signal_id} MARKET NOW — opening at current price immediately")
+            elif not await self._wait_for_entry(sd, connections, resolved):
                 _set_signal_state(signal_id, "expired")
                 _log("signal", "window_expired",
                      "Price did not enter the zone within the window — discarded",

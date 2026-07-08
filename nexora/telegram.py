@@ -198,6 +198,7 @@ class TelegramListener:
                     posted_at=posted_at,
                     symbol=symbol,
                     direction=parsed.direction,
+                    immediate=parsed.immediate,
                     entry_low=parsed.entry_low,
                     entry_high=parsed.entry_high,
                     sl=parsed.sl,
@@ -207,9 +208,10 @@ class TelegramListener:
                 db.add(sig)
                 db.flush()
                 sig.magic = config.MAGIC_BASE + (sig.id % 100000)
+                zone = "MARKET NOW" if parsed.immediate else \
+                    f"zone {parsed.entry_low}-{parsed.entry_high}"
                 self._log(db, "signal", "received",
-                          f"[{channel}] {symbol} {parsed.direction} zone "
-                          f"{parsed.entry_low}-{parsed.entry_high} "
+                          f"[{channel}] {symbol} {parsed.direction} {zone} "
                           f"SL {parsed.sl} TP1 {parsed.tp1}",
                           signal_id=sig.id)
                 new_signals += 1
