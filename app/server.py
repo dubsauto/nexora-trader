@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from app.init_db import run_init
 from app.api.auth_routes import router as auth_router
 from app.api.admin_routes import router as admin_router
+from app.api.client_routes import router as client_router
 
 load_dotenv()
 
@@ -30,20 +31,42 @@ async def startup_event():
         print(f"[startup] DB init skipped/deferred, continuing to serve: {e}")
 
 
-# ── pages ─────────────────────────────────────────────
+# ── client portal (base root — the many) ─────────────
 @app.get("/")
-async def serve_login():
+async def serve_client_login():
+    return FileResponse("static/client-login.html")
+
+
+@app.get("/signup")
+async def serve_client_signup():
+    return FileResponse("static/client-signup.html")
+
+
+@app.get("/reset")
+async def serve_client_reset():
+    return FileResponse("static/client-reset.html")
+
+
+@app.get("/portal")
+async def serve_portal():
+    return FileResponse("static/portal.html")
+
+
+# ── admin dashboard (prefixed — the few) ─────────────
+@app.get("/admin")
+async def serve_admin_login():
     return FileResponse("static/login.html")
 
 
-@app.get("/app")
-async def serve_dashboard():
+@app.get("/admin/app")
+async def serve_admin_dashboard():
     return FileResponse("static/dashboard.html")
 
 
 # ── API ──────────────────────────────────────────────
 app.include_router(auth_router)
 app.include_router(admin_router)
+app.include_router(client_router)
 
 
 @app.get("/health")

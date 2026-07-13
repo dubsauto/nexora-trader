@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXORA — Create Account</title>
+<style>
+  :root{ --bg:#0d0d0f; --panel:#151518; --line:#26262b; --text:#e8e6e3;
+         --muted:#8a8791; --orange:#f97316; --orange2:#fb923c; --red:#ef4444; --green:#22c55e; }
+  *{ box-sizing:border-box; margin:0; }
+  body{ min-height:100vh; display:flex; align-items:center; justify-content:center;
+        background:radial-gradient(900px 500px at 70% -10%, #1c1410, var(--bg));
+        color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; padding:20px; }
+  .card{ width:100%; max-width:460px; background:var(--panel); border:1px solid var(--line);
+         border-radius:18px; padding:32px 30px; box-shadow:0 24px 60px rgba(0,0,0,.5); }
+  .brand{ text-align:center; margin-bottom:20px; }
+  .brand .logo{ width:48px; height:48px; margin:0 auto 10px; border-radius:13px;
+     background:linear-gradient(135deg,var(--orange),var(--orange2));
+     display:flex; align-items:center; justify-content:center; font-size:22px;
+     box-shadow:0 0 30px rgba(249,115,22,.35); }
+  .brand h1{ font-size:18px; letter-spacing:1px; } .brand h1 span{ color:var(--orange); }
+  .brand p{ color:var(--muted); font-size:12.5px; margin-top:4px; }
+  .sect{ font-size:11px; text-transform:uppercase; letter-spacing:1px; color:var(--orange);
+         margin:18px 0 4px; font-weight:700; }
+  label{ display:block; font-size:12px; color:var(--muted); margin:11px 0 5px; }
+  input,select{ width:100%; background:#0e0e11; color:var(--text); border:1px solid var(--line);
+         border-radius:10px; padding:11px 13px; font-size:14px; outline:none; transition:.15s; }
+  input:focus,select:focus{ border-color:var(--orange); box-shadow:0 0 0 3px rgba(249,115,22,.15); }
+  .pw-wrap{ position:relative; }
+  .pw-wrap input{ padding-right:44px; }
+  .pw-eye{ position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none;
+    border:none; cursor:pointer; font-size:16px; padding:6px; color:var(--muted); line-height:1; }
+  .pw-eye:hover{ color:var(--orange); }
+  .row2{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .btn{ width:100%; margin-top:22px; padding:13px; border:none; border-radius:10px;
+        background:linear-gradient(135deg,var(--orange),var(--orange2)); color:#111;
+        font-weight:700; font-size:15px; cursor:pointer; }
+  .btn:hover{ filter:brightness(1.1); } .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  .links{ text-align:center; margin-top:15px; font-size:13px; color:var(--muted); }
+  .links a{ color:var(--orange); text-decoration:none; }
+  .alert{ margin-top:14px; padding:10px 13px; border-radius:9px; font-size:13px; display:none; }
+  .alert.err{ display:block; background:rgba(239,68,68,.1); border:1px solid rgba(239,68,68,.3); color:#fca5a5; }
+  /* success popup */
+  .pop-bg{ position:fixed; inset:0; background:rgba(0,0,0,.7); display:none;
+           align-items:center; justify-content:center; z-index:50; padding:20px; }
+  .pop-bg.show{ display:flex; }
+  .pop{ background:var(--panel); border:1px solid var(--line); border-radius:18px;
+        max-width:380px; width:100%; padding:32px; text-align:center; }
+  .pop .ico{ font-size:44px; margin-bottom:12px; }
+  .pop h3{ margin-bottom:10px; } .pop p{ color:var(--muted); font-size:14px; line-height:1.6; }
+  .pop .btn{ margin-top:20px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="brand">
+    <div class="logo">⚡</div>
+    <h1>NEXORA <span>AI TRADER</span></h1>
+    <p>Create your client account</p>
+  </div>
+  <form id="f">
+    <div class="sect">Your details</div>
+    <div class="row2">
+      <div><label>Full name</label><input id="full_name" required placeholder="John Doe"></div>
+      <div><label>Gender</label>
+        <select id="gender" required>
+          <option value="male">Male</option><option value="female">Female</option>
+        </select></div>
+    </div>
+    <label>Email</label><input id="email" type="email" required placeholder="you@example.com">
+    <label>Password</label>
+    <div class="pw-wrap">
+      <input id="password" type="password" required minlength="6" placeholder="min. 6 characters">
+      <button type="button" class="pw-eye" onclick="togglePw('password',this)" aria-label="Show password">👁</button>
+    </div>
+
+    <div class="sect">Your MT5 account</div>
+    <div class="row2">
+      <div><label>MT5 login ID</label><input id="mt5_login" required placeholder="e.g. 51234567"></div>
+      <div><label>MT5 password</label>
+        <div class="pw-wrap">
+          <input id="mt5_password" type="password" required>
+          <button type="button" class="pw-eye" onclick="togglePw('mt5_password',this)" aria-label="Show password">👁</button>
+        </div></div>
+    </div>
+    <label>Broker / Server</label><input id="server" required placeholder="e.g. NeexMarkets-Live">
+
+    <div class="alert" id="alert"></div>
+    <button class="btn" id="btn" type="submit">Create Account</button>
+    <div class="links">Already have an account? <a href="/">Sign in</a></div>
+  </form>
+</div>
+
+<div class="pop-bg" id="pop">
+  <div class="pop">
+    <div class="ico">✅</div>
+    <h3>Account created!</h3>
+    <p>You can log in, but your profile is <b style="color:var(--orange)">pending</b> and
+       waiting for admin approval. You'll receive an email once you're approved.</p>
+    <button class="btn" onclick="location.href='/'">Go to Login</button>
+  </div>
+</div>
+
+<script>
+function togglePw(id,btn){ const i=document.getElementById(id);
+  if(i.type==="password"){ i.type="text"; btn.textContent="🙈"; }
+  else{ i.type="password"; btn.textContent="👁"; } }
+document.getElementById("f").addEventListener("submit", async (e)=>{
+  e.preventDefault();
+  const a=document.getElementById("alert"), b=document.getElementById("btn");
+  a.className="alert"; b.disabled=true; b.textContent="Creating account...";
+  const payload={};
+  ["full_name","gender","email","password","mt5_login","mt5_password","server"]
+    .forEach(id=>payload[id]=document.getElementById(id).value.trim());
+  try{
+    const r=await fetch("/client/signup",{method:"POST",
+      headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+    const d=await r.json();
+    if(r.ok){ document.getElementById("pop").classList.add("show"); }
+    else{ a.textContent=d.detail||"Could not create the account"; a.className="alert err"; }
+  }catch(_){ a.textContent="Connection error — please try again."; a.className="alert err"; }
+  b.disabled=false; b.textContent="Create Account";
+});
+</script>
+</body>
+</html>

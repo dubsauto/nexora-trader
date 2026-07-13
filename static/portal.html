@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXORA — My Dashboard</title>
+<style>
+  :root{ --bg:#0d0d0f; --panel:#151518; --panel2:#1a1a1f; --line:#26262b; --text:#e8e6e3;
+         --muted:#8a8791; --orange:#f97316; --orange2:#fb923c; --red:#ef4444;
+         --green:#22c55e; --violet:#a78bfa; }
+  *{ box-sizing:border-box; margin:0; }
+  body{ background:radial-gradient(1100px 600px at 80% -10%, #1c1410, var(--bg));
+        color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; min-height:100vh; }
+  a{ color:var(--orange); text-decoration:none; }
+
+  /* layout */
+  .shell{ display:flex; min-height:100vh; }
+  .sidebar{ width:230px; background:#111114; border-right:1px solid var(--line);
+            padding:20px 14px; display:flex; flex-direction:column; gap:4px;
+            transition:margin .25s; flex-shrink:0; }
+  .shell.side-hidden .sidebar{ margin-left:-230px; }
+  .sb-brand{ display:flex; align-items:center; gap:10px; padding:4px 8px 20px; }
+  .sb-logo{ width:36px; height:36px; border-radius:10px; font-size:18px;
+     background:linear-gradient(135deg,var(--orange),var(--orange2));
+     display:flex; align-items:center; justify-content:center;
+     box-shadow:0 0 24px rgba(249,115,22,.3); }
+  .sb-brand b{ font-size:14px; letter-spacing:.5px; } .sb-brand b span{ color:var(--orange); }
+  .nav-item{ display:flex; align-items:center; gap:11px; padding:11px 13px; border-radius:10px;
+             color:var(--muted); cursor:pointer; font-size:14px; transition:.15s; }
+  .nav-item:hover{ background:rgba(255,255,255,.04); color:var(--text); }
+  .nav-item.active{ background:rgba(249,115,22,.12); color:var(--orange);
+                    border:1px solid rgba(249,115,22,.2); }
+  .sb-foot{ margin-top:auto; }
+  .main{ flex:1; padding:22px 28px; min-width:0; }
+
+  /* top bar */
+  .top{ display:flex; align-items:center; gap:14px; margin-bottom:22px; }
+  .burger{ background:var(--panel); border:1px solid var(--line); color:var(--text);
+           border-radius:10px; width:42px; height:42px; font-size:18px; cursor:pointer; }
+  .burger:hover{ border-color:var(--orange); color:var(--orange); }
+  .top .spacer{ flex:1; }
+  .bell{ position:relative; background:var(--panel); border:1px solid var(--line);
+         border-radius:10px; width:42px; height:42px; font-size:17px; cursor:pointer;
+         color:var(--text); }
+  .bell:hover{ border-color:var(--orange); }
+  .bell .badge{ position:absolute; top:-6px; right:-6px; min-width:19px; height:19px;
+    background:var(--orange); color:#111; font-size:11px; font-weight:800; border-radius:999px;
+    display:none; align-items:center; justify-content:center; padding:0 5px; }
+  .bell .badge.show{ display:flex; }
+  .prof{ text-align:center; }
+  .avatar{ width:44px; height:44px; border-radius:50%; font-size:22px;
+     background:linear-gradient(135deg,#2a2a30,#1c1c22); border:2px solid var(--orange);
+     display:flex; align-items:center; justify-content:center; margin:0 auto; }
+  .prof .st{ font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.6px;
+             margin-top:3px; color:var(--muted); }
+  .prof .st.vip{ color:var(--orange); } .prof .st.trial{ color:var(--violet); }
+
+  /* notification dropdown */
+  .notif-dd{ position:absolute; right:28px; top:74px; width:330px; max-height:420px; overflow-y:auto;
+    background:var(--panel2); border:1px solid var(--line); border-radius:14px; z-index:60;
+    box-shadow:0 22px 50px rgba(0,0,0,.6); display:none; }
+  .notif-dd.show{ display:block; }
+  .notif-dd .nrow{ padding:13px 16px; border-bottom:1px solid var(--line); }
+  .notif-dd .nrow b{ font-size:13px; display:block; }
+  .notif-dd .nrow p{ color:var(--muted); font-size:12px; margin-top:3px; }
+  .notif-dd .nrow small{ color:#6b6873; font-size:11px; }
+  .notif-dd .empty{ padding:26px; text-align:center; color:var(--muted); font-size:13px; }
+
+  /* headings */
+  h1.welcome{ font-size:24px; margin-bottom:4px; }
+  .sub{ color:var(--muted); font-size:13.5px; margin-bottom:22px; }
+
+  /* cards */
+  .grid-21{ display:grid; grid-template-columns:2fr 1fr; gap:16px; align-items:stretch; }
+  .grid-111{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-top:16px; }
+  .card{ background:var(--panel); border:1px solid var(--line); border-radius:16px;
+         padding:20px; display:flex; flex-direction:column; }
+  .card h3{ font-size:15px; display:flex; align-items:center; gap:8px; margin-bottom:16px; }
+  .card h3 .right{ margin-left:auto; display:flex; align-items:center; gap:6px;
+                   font-size:12px; font-weight:400; color:var(--muted); }
+  .dot{ width:9px; height:9px; border-radius:50%; display:inline-block; }
+  .dot.g{ background:var(--green); box-shadow:0 0 8px var(--green); }
+  .dot.r{ background:var(--red); }
+  .mini-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+  .mini-grid.three{ grid-template-columns:repeat(3,1fr); margin-top:10px; }
+  .mini{ background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:14px; }
+  .mini .l{ color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+  .mini .v{ font-size:18px; font-weight:700; margin-top:5px; }
+  .mini .v.small{ font-size:14px; }
+  .mini .v.g{ color:var(--green); } .mini .v.r{ color:var(--red); } .mini .v.o{ color:var(--orange); }
+  .conn-row{ margin-bottom:11px; }
+  .conn-row label{ display:block; font-size:11.5px; color:var(--muted); margin-bottom:5px; }
+  .conn-row input{ width:100%; background:#0e0e11; color:var(--text); border:1px solid var(--line);
+      border-radius:9px; padding:10px 12px; font-size:13.5px; outline:none; }
+  .conn-row input:focus{ border-color:var(--orange); }
+  .btn{ padding:11px 16px; border:none; border-radius:10px; font-weight:700; cursor:pointer;
+        background:linear-gradient(135deg,var(--orange),var(--orange2)); color:#111; font-size:13.5px; }
+  .btn:hover{ filter:brightness(1.1); } .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  .btn.ghost{ background:var(--panel2); color:var(--text); border:1px solid var(--line); font-weight:600; }
+  .btn.ghost:hover{ border-color:var(--orange); color:var(--orange); }
+  .btn.sm{ padding:6px 12px; font-size:12px; }
+  .viewall{ margin-left:auto; font-size:12px; color:var(--orange); cursor:pointer; }
+
+  .list-row{ display:flex; align-items:center; gap:10px; padding:10px 4px;
+             border-bottom:1px solid rgba(38,38,43,.6); font-size:13px; }
+  .list-row:last-child{ border-bottom:none; }
+  .side-buy{ color:var(--green); font-weight:800; } .side-sell{ color:var(--red); font-weight:800; }
+  .lr-muted{ color:var(--muted); font-size:12px; } .lr-right{ margin-left:auto; color:var(--muted); font-size:12px; }
+  .empty-mini{ color:var(--muted); font-size:13px; padding:18px 4px; text-align:center; }
+
+  /* support */
+  .support{ margin-top:16px; }
+  .tickets-wrap{ display:grid; grid-template-columns:1fr 1.6fr; gap:16px; }
+  .ticket-item{ padding:12px 14px; border:1px solid var(--line); border-radius:11px;
+                margin-bottom:9px; cursor:pointer; transition:.15s; }
+  .ticket-item:hover{ border-color:var(--orange); }
+  .ticket-item.active{ border-color:var(--orange); background:rgba(249,115,22,.06); }
+  .ticket-item b{ font-size:13.5px; display:block; }
+  .ticket-item small{ color:var(--muted); font-size:11.5px; }
+  .pill{ font-size:10px; font-weight:800; text-transform:uppercase; padding:2px 8px;
+         border-radius:999px; }
+  .pill.open{ background:rgba(34,197,94,.13); color:var(--green); }
+  .pill.closed{ background:rgba(138,135,145,.13); color:var(--muted); }
+  .chat{ display:flex; flex-direction:column; height:420px; }
+  .chat-msgs{ flex:1; overflow-y:auto; padding:6px 2px; }
+  .msg{ max-width:82%; margin-bottom:10px; padding:10px 13px; border-radius:12px; font-size:13.5px; }
+  .msg.client{ margin-left:auto; background:rgba(249,115,22,.13); border:1px solid rgba(249,115,22,.25); }
+  .msg.admin{ background:var(--panel2); border:1px solid var(--line); }
+  .msg small{ display:block; color:var(--muted); font-size:10.5px; margin-top:5px; }
+  .msg img{ max-width:150px; border-radius:8px; margin-top:6px; display:block; cursor:pointer; }
+  .chat-input{ display:flex; gap:8px; margin-top:10px; }
+  .chat-input input[type=text]{ flex:1; background:#0e0e11; color:var(--text);
+      border:1px solid var(--line); border-radius:10px; padding:11px 13px; font-size:13.5px; outline:none; }
+  textarea{ width:100%; background:#0e0e11; color:var(--text); border:1px solid var(--line);
+      border-radius:10px; padding:11px 13px; font-size:13.5px; outline:none; resize:vertical; min-height:80px; }
+  .imgs-preview{ display:flex; gap:8px; margin-top:8px; }
+  .imgs-preview img{ width:54px; height:54px; object-fit:cover; border-radius:8px;
+                     border:1px solid var(--line); }
+  .attach-note{ font-size:11.5px; color:var(--muted); margin-top:5px; }
+
+  /* pending lock */
+  .pending-box{ max-width:520px; margin:80px auto; text-align:center; background:var(--panel);
+    border:1px solid var(--line); border-radius:18px; padding:46px 36px; }
+  .pending-box .ico{ font-size:52px; margin-bottom:14px; }
+  .pending-box h2{ margin-bottom:10px; }
+  .pending-box p{ color:var(--muted); font-size:14px; line-height:1.7; }
+
+  #toast{ position:fixed; bottom:22px; right:22px; background:var(--panel2); border:1px solid var(--line);
+    border-left:3px solid var(--orange); border-radius:11px; padding:13px 17px; font-size:13px;
+    transform:translateY(130px); transition:.3s; z-index:100; max-width:340px; }
+  #toast.show{ transform:translateY(0); }
+  #toast.err{ border-left-color:var(--red); } #toast.ok{ border-left-color:var(--green); }
+  .hidden{ display:none !important; }
+  .section-title{ font-size:18px; margin:4px 0 16px; }
+  @media(max-width:1000px){ .grid-21,.grid-111,.tickets-wrap{ grid-template-columns:1fr; }
+    .mini-grid{ grid-template-columns:repeat(2,1fr); } .main{ padding:16px; } }
+</style>
+</head>
+<body>
+<div class="shell" id="shell">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sb-brand"><div class="sb-logo">⚡</div><b>NEXORA <span>AI</span></b></div>
+    <div class="nav-item active" data-view="dashboard" onclick="go('dashboard')">🏠 Dashboard</div>
+    <div class="nav-item" data-view="profile" onclick="go('profile')">👤 Profile</div>
+    <div class="nav-item" data-view="signals" onclick="go('signals')">📡 Recent Signals</div>
+    <div class="nav-item" data-view="trades" onclick="go('trades')">📊 Recent Trades</div>
+    <div class="nav-item" data-view="support" onclick="go('support')">💬 Support</div>
+    <div class="nav-item" data-view="settings" onclick="go('settings')">⚙️ Settings</div>
+    <div class="sb-foot"><div class="nav-item" onclick="logout()">🚪 Logout</div></div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+    <div class="top">
+      <button class="burger" onclick="toggleSide()" title="Toggle sidebar">☰</button>
+      <div class="spacer"></div>
+      <button class="bell" onclick="toggleNotif()" title="Notifications">🔔
+        <span class="badge" id="nBadge">0</span></button>
+      <div class="prof">
+        <div class="avatar" id="avatar">👤</div>
+        <div class="st" id="accStatus">—</div>
+      </div>
+    </div>
+
+    <div class="notif-dd" id="notifDD"></div>
+
+    <!-- PENDING LOCK -->
+    <div id="pendingView" class="hidden">
+      <div class="pending-box">
+        <div class="ico">⏳</div>
+        <h2>Account Pending Approval</h2>
+        <p>Thanks for signing up! Your profile is currently <b style="color:var(--orange)">pending</b>
+           and waiting for admin approval.<br><br>
+           You'll receive an email as soon as your account is approved — then your full
+           dashboard will unlock automatically.</p>
+      </div>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div id="view-dashboard">
+      <h1 class="welcome">👋 Welcome back, <span id="firstName">…</span></h1>
+      <div class="sub">Here is what is happening with your account today</div>
+
+      <div class="grid-21">
+        <div class="card">
+          <h3>Account Overview
+            <span class="right">
+              <span id="ovSynced" class="lr-muted"></span>
+              <button class="btn ghost sm" id="ovRefresh" onclick="refreshMetrics()">↻ Refresh</button>
+            </span>
+          </h3>
+          <div class="mini-grid">
+            <div class="mini"><div class="l">Balance</div><div class="v" id="ovBalance">—</div></div>
+            <div class="mini"><div class="l">Equity</div><div class="v" id="ovEquity">—</div></div>
+            <div class="mini"><div class="l">Profit Today</div><div class="v" id="ovProfit">—</div></div>
+            <div class="mini"><div class="l">Bot Status</div><div class="v small o" id="ovBot">—</div></div>
+          </div>
+          <div class="mini-grid three">
+            <div class="mini"><div class="l">Server / Broker</div><div class="v small" id="ovServer">—</div></div>
+            <div class="mini"><div class="l">MT5 Account</div><div class="v small" id="ovLogin">—</div></div>
+            <div class="mini"><div class="l">Licence Expiry</div><div class="v small" id="ovExpiry">—</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>MT5 Connection
+            <span class="right"><span class="dot g" id="connDot"></span><span id="connText">Connected</span></span>
+          </h3>
+          <div class="conn-row"><label>Broker</label><input id="cBroker"></div>
+          <div class="conn-row"><label>Server</label><input id="cServer"></div>
+          <div class="conn-row"><label>Login</label><input id="cLogin"></div>
+          <div class="conn-row"><label>Password</label><input id="cPassword" type="password" placeholder="leave blank to keep current"></div>
+          <button class="btn" id="connBtn" style="margin-top:auto;" onclick="updateConnection()">Update Connection</button>
+        </div>
+      </div>
+
+      <div class="grid-111">
+        <div class="card">
+          <h3>Recent Signals <span class="viewall" onclick="go('signals')">View All</span></h3>
+          <div id="dashSignals"></div>
+        </div>
+        <div class="card">
+          <h3>Recent Trades <span class="viewall" onclick="go('trades')">View All</span></h3>
+          <div id="dashTrades"></div>
+        </div>
+        <div class="card">
+          <h3>Live Trades <span class="viewall" onclick="go('trades')">View All</span></h3>
+          <div id="dashLive"></div>
+        </div>
+      </div>
+
+      <!-- SUPPORT (on the main dashboard) -->
+      <div class="card support">
+        <h3>💬 Support <span class="viewall" onclick="go('support')">Open Support Center</span></h3>
+        <div class="lr-muted">Need help? Create a ticket and our team will get back to you —
+          replies appear here and in your notifications.</div>
+        <div style="margin-top:12px;"><button class="btn sm" onclick="go('support'); showNewTicket();">+ Create Ticket</button></div>
+      </div>
+    </div>
+
+    <!-- PROFILE -->
+    <div id="view-profile" class="hidden">
+      <div class="section-title">👤 Profile</div>
+      <div class="card" style="max-width:520px;">
+        <div class="mini-grid" style="grid-template-columns:1fr 1fr;">
+          <div class="mini"><div class="l">Full name</div><div class="v small" id="pName">—</div></div>
+          <div class="mini"><div class="l">Email</div><div class="v small" id="pEmail">—</div></div>
+          <div class="mini"><div class="l">Gender</div><div class="v small" id="pGender">—</div></div>
+          <div class="mini"><div class="l">Account status</div><div class="v small o" id="pStatus">—</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SIGNALS -->
+    <div id="view-signals" class="hidden">
+      <div class="section-title">📡 Recent Signals</div>
+      <div class="card"><div id="allSignals"></div></div>
+    </div>
+
+    <!-- TRADES -->
+    <div id="view-trades" class="hidden">
+      <div class="section-title">📊 Recent Trades</div>
+      <div class="card"><div id="allTrades"></div></div>
+      <div class="section-title" style="margin-top:20px;">🔴 Live Trades</div>
+      <div class="card"><div id="allLive"></div></div>
+    </div>
+
+    <!-- SUPPORT CENTER -->
+    <div id="view-support" class="hidden">
+      <div class="section-title">💬 Support</div>
+      <div class="tickets-wrap">
+        <div class="card">
+          <h3>My Tickets <span class="viewall" onclick="showNewTicket()">+ New Ticket</span></h3>
+          <div id="ticketList"></div>
+        </div>
+        <div class="card">
+          <div id="newTicket">
+            <h3>Create Ticket</h3>
+            <div class="conn-row"><label>Subject</label><input id="tSubject" placeholder="Short summary"></div>
+            <label style="font-size:11.5px;color:var(--muted);margin-bottom:5px;display:block;">Message</label>
+            <textarea id="tBody" placeholder="Describe your issue…"></textarea>
+            <div style="margin-top:9px;">
+              <input type="file" id="tImgs" accept="image/*" multiple style="display:none;" onchange="pickImages(this)">
+              <button class="btn ghost sm" onclick="document.getElementById('tImgs').click()">📎 Attach images</button>
+              <span class="attach-note">up to 3 images</span>
+              <div class="imgs-preview" id="tPreview"></div>
+            </div>
+            <button class="btn" style="margin-top:14px;" id="tBtn" onclick="createTicket()">Submit Ticket</button>
+          </div>
+          <div id="ticketChat" class="hidden">
+            <h3 id="chatSubject">Ticket</h3>
+            <div class="chat">
+              <div class="chat-msgs" id="chatMsgs"></div>
+              <div class="imgs-preview" id="rPreview"></div>
+              <div class="chat-input">
+                <input type="file" id="rImgs" accept="image/*" multiple style="display:none;" onchange="pickReplyImages(this)">
+                <button class="btn ghost sm" onclick="document.getElementById('rImgs').click()">📎</button>
+                <input type="text" id="rBody" placeholder="Type a reply…" onkeydown="if(event.key==='Enter')sendReply()">
+                <button class="btn sm" onclick="sendReply()">Send</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div id="view-settings" class="hidden">
+      <div class="section-title">⚙️ Settings</div>
+      <div class="card" style="max-width:520px;">
+        <div class="lr-muted">More settings are coming soon. To update your MT5 connection,
+          use the card on the Dashboard. To change your password, log out and use
+          “Forgot password”.</div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const token = localStorage.getItem("client_token");
+if(!token){ location.href="/"; }
+const H = { "Content-Type":"application/json", "Authorization":"Bearer "+token };
+
+function toast(m,k){ const t=document.getElementById("toast"); t.textContent=m; t.className="";
+  t.classList.add("show"); if(k)t.classList.add(k); setTimeout(()=>t.classList.remove("show"),3400); }
+async function api(p,m="GET",b){ const o={method:m,headers:H}; if(b)o.body=JSON.stringify(b);
+  const r=await fetch(p,o);
+  if(r.status===401){ localStorage.removeItem("client_token"); location.href="/"; return; }
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(d.detail||d.message||"Request failed");
+  return d; }
+function logout(){ localStorage.removeItem("client_token"); location.href="/"; }
+function toggleSide(){ document.getElementById("shell").classList.toggle("side-hidden"); }
+function esc(s){ return (s==null?"":String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function ago(iso){ if(!iso) return "—"; const s=(Date.now()-new Date(iso+"Z").getTime())/1000;
+  if(s<60) return Math.max(1,Math.round(s))+"s ago"; if(s<3600) return Math.round(s/60)+"m ago";
+  if(s<86400) return Math.round(s/3600)+"h ago"; return Math.round(s/86400)+"d ago"; }
+function fmtMoney(v){ return v==null?"—":"$"+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fmtDate(iso){ return iso? String(iso).replace("T"," ").slice(0,16):"—"; }
+
+let ME=null, APPROVED=false;
+
+function go(view){
+  document.querySelectorAll(".nav-item[data-view]").forEach(n=>
+    n.classList.toggle("active", n.dataset.view===view));
+  ["dashboard","profile","signals","trades","support","settings"].forEach(v=>
+    document.getElementById("view-"+v).classList.toggle("hidden", v!==view));
+  document.getElementById("notifDD").classList.remove("show");
+}
+
+/* ---------- me / gate ---------- */
+async function loadMe(){
+  ME = await api("/client-api/me");
+  APPROVED = ME.approval_status === "approved";
+  document.getElementById("firstName").textContent = ME.first_name;
+  document.getElementById("avatar").textContent = ME.gender==="female" ? "👩" : "👨";
+  const st=document.getElementById("accStatus");
+  st.textContent = ME.status==="active" ? "VIP" : (ME.status==="trial" ? "TRIAL" : ME.status.toUpperCase());
+  st.className = "st " + (ME.status==="active"?"vip":(ME.status==="trial"?"trial":""));
+  const badge=document.getElementById("nBadge");
+  badge.textContent = ME.unread_notifications;
+  badge.classList.toggle("show", ME.unread_notifications>0);
+
+  document.getElementById("pName").textContent=ME.name;
+  document.getElementById("pEmail").textContent=ME.email||"—";
+  document.getElementById("pGender").textContent=ME.gender||"—";
+  document.getElementById("pStatus").textContent=(ME.status||"—")+" ("+ME.approval_status+")";
+
+  if(!APPROVED){
+    document.getElementById("pendingView").classList.remove("hidden");
+    ["dashboard","profile","signals","trades","support","settings"].forEach(v=>
+      document.getElementById("view-"+v).classList.add("hidden"));
+    document.querySelectorAll(".nav-item[data-view]").forEach(n=>n.style.opacity=.35);
+  }
+}
+
+/* ---------- dashboard ---------- */
+async function loadDashboard(){
+  if(!APPROVED) return;
+  const d = await api("/client-api/dashboard");
+  document.getElementById("ovBalance").textContent = fmtMoney(d.balance);
+  document.getElementById("ovEquity").textContent = fmtMoney(d.equity);
+  const p=document.getElementById("ovProfit");
+  if(d.profit_today==null){ p.textContent="—"; p.className="v"; }
+  else{
+    p.textContent=(d.profit_today>=0?"+$":"-$")+
+      Math.abs(d.profit_today).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+    p.className="v "+(d.profit_today>=0?"g":"r");
+  }
+  document.getElementById("ovBot").textContent = d.bot_status==="active"?"● Active":"◌ Paused";
+  document.getElementById("ovBot").className = "v small " + (d.bot_status==="active"?"g":"");
+  document.getElementById("ovServer").textContent = d.server||"—";
+  document.getElementById("ovLogin").textContent = d.mt5_login||"—";
+  const exp=document.getElementById("ovExpiry");
+  exp.textContent = d.license_expiry ? fmtDate(d.license_expiry) : "—";
+  document.getElementById("ovSynced").textContent =
+    d.synced_at ? ("Updated "+ago(d.synced_at)) : "Not synced yet";
+  document.getElementById("connDot").className = "dot "+(d.connected?"g":"r");
+  document.getElementById("connText").textContent = d.connected?"Connected":"Not connected";
+  if(!document.getElementById("cBroker").value) document.getElementById("cBroker").value=d.broker||"";
+  if(!document.getElementById("cServer").value) document.getElementById("cServer").value=d.server||"";
+  if(!document.getElementById("cLogin").value) document.getElementById("cLogin").value=d.mt5_login||"";
+}
+
+async function refreshMetrics(){
+  const b=document.getElementById("ovRefresh"); b.disabled=true; b.textContent="Refreshing…";
+  try{ const r=await api("/client-api/refresh","POST"); toast(r.message, r.queued===false?"":"ok"); }
+  catch(e){ toast(e.message,"err"); }
+  // the 20s auto-poll pulls in the fresh values once the worker finishes
+  setTimeout(()=>{ b.disabled=false; b.textContent="↻ Refresh"; loadDashboard(); }, 10000);
+}
+
+async function updateConnection(){
+  const b=document.getElementById("connBtn"); b.disabled=true; b.textContent="Updating…";
+  try{
+    const r=await api("/client-api/connection","PUT",{
+      server:document.getElementById("cServer").value.trim()||document.getElementById("cBroker").value.trim(),
+      login:document.getElementById("cLogin").value.trim(),
+      password:document.getElementById("cPassword").value||null});
+    toast(r.message, r.connected?"ok":"err");
+    document.getElementById("cPassword").value="";
+    loadDashboard();
+  }catch(e){ toast(e.message,"err"); }
+  b.disabled=false; b.textContent="Update Connection";
+}
+
+/* ---------- signals / trades ---------- */
+function sigRow(s){
+  return `<div class="list-row">
+    <b>${esc(s.symbol||"—")}</b>
+    <span class="side-${(s.direction||"").toLowerCase()}">${esc(s.direction||"")}${s.immediate?" NOW":""}</span>
+    <span class="lr-muted">${s.lot} Lots</span>
+    <span class="lr-muted">${s.immediate?"MARKET":(s.entry??"—")}</span>
+    <span class="lr-right">${ago(s.time)}</span></div>`;
+}
+function tradeRow(t){
+  return `<div class="list-row">
+    <b>${esc(t.symbol||"—")}</b>
+    <span class="side-${(t.direction||"").toLowerCase()}">${esc(t.direction||"")}</span>
+    <span class="lr-muted">${t.lot} Lots</span>
+    <span class="lr-muted">${esc(t.state)}</span>
+    <span class="lr-right">${ago(t.opened_at)}</span></div>`;
+}
+const fill=(id,rows,fn,emptyMsg)=>{ document.getElementById(id).innerHTML =
+  rows.length? rows.map(fn).join("") : `<div class="empty-mini">${emptyMsg}</div>`; };
+
+async function loadLists(){
+  if(!APPROVED) return;
+  const [s5,t5,live,s20,t20] = await Promise.all([
+    api("/client-api/signals?limit=5"), api("/client-api/trades?limit=5"),
+    api("/client-api/trades?live=true&limit=10"),
+    api("/client-api/signals?limit=30"), api("/client-api/trades?limit=30")]);
+  fill("dashSignals",s5,sigRow,"No signals yet");
+  fill("dashTrades",t5,tradeRow,"No trades yet");
+  fill("dashLive",live,tradeRow,"No live trades");
+  fill("allSignals",s20,sigRow,"No signals yet");
+  fill("allTrades",t20,tradeRow,"No trades yet");
+  fill("allLive",live,tradeRow,"No live trades");
+}
+
+/* ---------- notifications ---------- */
+async function toggleNotif(){
+  const dd=document.getElementById("notifDD");
+  if(dd.classList.contains("show")){ dd.classList.remove("show"); return; }
+  const rows=await api("/client-api/notifications");
+  dd.innerHTML = rows.length ? rows.map(n=>
+    `<div class="nrow"><b>${esc(n.title)}</b><p>${esc(n.body||"")}</p><small>${ago(n.time)}</small></div>`).join("")
+    : `<div class="empty">No notifications yet</div>`;
+  dd.classList.add("show");
+  await api("/client-api/notifications/read","POST");
+  const badge=document.getElementById("nBadge"); badge.classList.remove("show");
+}
+
+/* ---------- support ---------- */
+let tImages=[], rImages=[], activeTicket=null;
+function showNewTicket(){ document.getElementById("newTicket").classList.remove("hidden");
+  document.getElementById("ticketChat").classList.add("hidden"); activeTicket=null;
+  document.querySelectorAll(".ticket-item").forEach(x=>x.classList.remove("active")); }
+
+function readFiles(input, arr, previewId){
+  const files=[...input.files].slice(0, 3-arr.length);
+  files.forEach(f=>{
+    if(!f.type.startsWith("image/")) return;
+    const rd=new FileReader();
+    rd.onload=()=>{ if(arr.length<3){ arr.push(rd.result); renderPreview(arr,previewId); } };
+    rd.readAsDataURL(f);
+  });
+  input.value="";
+}
+function renderPreview(arr,id){ document.getElementById(id).innerHTML =
+  arr.map((d,i)=>`<img src="${d}" title="click to remove" onclick="rmImg('${id}',${i})">`).join(""); }
+function rmImg(id,i){ const arr = id==="tPreview" ? tImages : rImages;
+  arr.splice(i,1); renderPreview(arr,id); }
+function pickImages(inp){ readFiles(inp,tImages,"tPreview"); }
+function pickReplyImages(inp){ readFiles(inp,rImages,"rPreview"); }
+
+async function loadTickets(){
+  if(!APPROVED) return;
+  const rows=await api("/client-api/tickets");
+  document.getElementById("ticketList").innerHTML = rows.length ? rows.map(t=>
+    `<div class="ticket-item ${activeTicket===t.id?'active':''}" onclick="openTicket(${t.id})">
+       <b>${esc(t.subject)} <span class="pill ${t.status}">${t.status}</span></b>
+       <small>${t.messages} message(s) · ${ago(t.updated_at)}</small></div>`).join("")
+    : `<div class="empty-mini">No tickets yet — create one!</div>`;
+}
+async function createTicket(){
+  const b=document.getElementById("tBtn"); b.disabled=true; b.textContent="Submitting…";
+  try{
+    await api("/client-api/tickets","POST",{
+      subject:document.getElementById("tSubject").value.trim(),
+      body:document.getElementById("tBody").value.trim(), images:tImages});
+    toast("Ticket created — we'll reply soon","ok");
+    document.getElementById("tSubject").value=""; document.getElementById("tBody").value="";
+    tImages=[]; renderPreview(tImages,"tPreview"); loadTickets();
+  }catch(e){ toast(e.message,"err"); }
+  b.disabled=false; b.textContent="Submit Ticket";
+}
+async function openTicket(id){
+  activeTicket=id;
+  document.getElementById("newTicket").classList.add("hidden");
+  document.getElementById("ticketChat").classList.remove("hidden");
+  const t=await api(`/client-api/tickets/${id}/messages`);
+  document.getElementById("chatSubject").innerHTML =
+    `${esc(t.subject)} <span class="pill ${t.status}">${t.status}</span>`;
+  document.getElementById("chatMsgs").innerHTML = t.messages.map(m=>
+    `<div class="msg ${m.sender}">${esc(m.body||"")}
+       ${(m.images||[]).map(i=>`<img src="${i}" onclick="window.open('${i}')">`).join("")}
+       <small>${m.sender==="admin"?"Support":"You"} · ${ago(m.time)}</small></div>`).join("");
+  const box=document.getElementById("chatMsgs"); box.scrollTop=box.scrollHeight;
+  loadTickets();
+}
+async function sendReply(){
+  if(!activeTicket) return;
+  const body=document.getElementById("rBody").value.trim();
+  if(!body && !rImages.length) return;
+  try{
+    await api(`/client-api/tickets/${activeTicket}/messages`,"POST",{body,images:rImages});
+    document.getElementById("rBody").value=""; rImages=[]; renderPreview(rImages,"rPreview");
+    openTicket(activeTicket);
+  }catch(e){ toast(e.message,"err"); }
+}
+
+/* ---------- boot ---------- */
+async function boot(){
+  try{
+    await loadMe();
+    if(APPROVED){ await Promise.all([loadDashboard(), loadLists(), loadTickets()]); }
+  }catch(e){ toast(e.message,"err"); }
+}
+boot();
+setInterval(boot, 20000);
+document.addEventListener("click",(e)=>{
+  const dd=document.getElementById("notifDD");
+  if(dd.classList.contains("show") && !dd.contains(e.target) && !e.target.closest(".bell"))
+    dd.classList.remove("show");
+});
+</script>
+</body>
+</html>

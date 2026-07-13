@@ -32,7 +32,7 @@
   .btn:disabled{ opacity:.4; cursor:not-allowed; }
 
   .wrap{ padding:22px; max-width:1500px; margin:0 auto; }
-  .cards{ display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:20px; }
+  .cards{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin-bottom:20px; }
   .card{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px 16px; }
   .card .n{ font-size:26px; font-weight:800; }
   .card .l{ color:var(--muted); font-size:12px; margin-top:2px; text-transform:uppercase; letter-spacing:.5px; }
@@ -147,6 +147,7 @@
     <div class="tab active" data-tab="clients" onclick="switchTab('clients')">Clients</div>
     <div class="tab" data-tab="symbols" onclick="switchTab('symbols')">Symbols</div>
     <div class="tab" data-tab="signals" onclick="switchTab('signals')">Signals</div>
+    <div class="tab" data-tab="support" onclick="switchTab('support')">Support <span id="ticketBadge" class="pill open hidden" style="margin-left:4px;">0</span></div>
     <div class="tab" data-tab="activity" onclick="switchTab('activity')">Activity Log</div>
   </div>
 
@@ -208,6 +209,29 @@
         </table>
       </div>
       <div class="empty hidden" id="signalsEmpty">No signals received yet.</div>
+    </div>
+  </div>
+
+  <!-- SUPPORT -->
+  <div id="tab-support" class="hidden">
+    <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:14px;">
+      <div class="panel">
+        <div class="panel-head"><div class="t">Tickets</div></div>
+        <div id="adminTicketList" style="padding:10px;"></div>
+        <div class="empty hidden" id="ticketsEmpty">No tickets yet.</div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div class="t" id="adminChatTitle">Select a ticket</div>
+          <div class="spacer"></div>
+          <button class="btn sm hidden" id="closeTicketBtn" onclick="closeTicket()">Mark Closed</button>
+        </div>
+        <div id="adminChatMsgs" style="padding:14px;max-height:420px;overflow-y:auto;"></div>
+        <div id="adminChatInput" class="hidden" style="display:flex;gap:8px;padding:12px;border-top:1px solid var(--line);">
+          <input id="adminReply" style="flex:1;background:#0b121a;color:var(--text);border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:13px;"
+                 placeholder="Type a reply…" onkeydown="if(event.key==='Enter')sendAdminReply()">
+          <button class="btn sm" onclick="sendAdminReply()">Reply</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -319,7 +343,7 @@
 
 <script>
 const token = localStorage.getItem("token");
-if(!token){ location.href = "/"; }
+if(!token){ location.href = "/admin"; }
 const H = { "Content-Type":"application/json", "Authorization":"Bearer "+token };
 
 function toast(msg, kind){ const t=document.getElementById("toast");
@@ -339,17 +363,17 @@ async function api(path, method="GET", body){
   const opt = { method, headers:H };
   if(body) opt.body = JSON.stringify(body);
   const res = await fetch(path, opt);
-  if(res.status===401){ location.href="/"; return; }
+  if(res.status===401){ location.href="/admin"; return; }
   const data = await res.json().catch(()=>({}));
   if(!res.ok){ throw new Error(data.detail || data.message || "Request failed"); }
   return data;
 }
 
-function logout(){ localStorage.removeItem("token"); location.href="/"; }
+function logout(){ localStorage.removeItem("token"); location.href="/admin"; }
 
 function switchTab(name){
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.tab===name));
-  ["clients","symbols","signals","activity"].forEach(n=>
+  ["clients","symbols","signals","support","activity"].forEach(n=>
     document.getElementById("tab-"+n).classList.toggle("hidden", n!==name));
 }
 
@@ -398,7 +422,8 @@ async function loadListener(){
 async function loadStats(){
   const s = await api("/api/stats");
   const cards = [
-    ["total","Total Clients",""], ["trial","Trial","trial"], ["active","Active","active"],
+    ["total","Total Clients",""], ["pending_approval","Pending Approval","expired"],
+    ["trial","Trial","trial"], ["active","Active","active"],
     ["expired","Expired","expired"], ["inactive","Inactive","inactive"], ["trading_on","Trading On","on"]
   ];
   document.getElementById("cards").innerHTML = cards.map(([k,l,cls])=>
@@ -438,6 +463,21 @@ function renderClients(){
   body.innerHTML = list.map(c=>{
     const prov = c.provisioned ? "" : ` <span class="muted" title="${esc(c.connection_note||'MetaApi account not created')}">&#9888;</span>`;
     const isActive = c.status==="active";
+    // Self-signup awaiting approval: only Approve / Decline are offered.
+    if(c.approval_status==="pending"){
+      return `<tr>
+        <td><b style="cursor:pointer;color:var(--cyan)" onclick="openDetail(${c.id})">${esc(c.name)}</b>
+            <br><small class="muted">${esc(c.email||"")} · signed up</small></td>
+        <td class="mono">${esc(c.login)}<br><small class="muted">${esc(c.server)}</small></td>
+        <td><span class="pill expired" style="background:rgba(255,176,32,.15);color:var(--amber)">PENDING APPROVAL</span></td>
+        <td class="muted">—</td><td class="muted">—</td>
+        <td class="mono">${c.lot_size}</td><td>${c.risk_profile}</td><td class="muted">—</td>
+        <td><div class="actions">
+          <button class="btn sm green" title="Approve this signup (provisions MetaApi + emails the client)" onclick="approveClient(${c.id})">Approve</button>
+          <button class="btn sm red" title="Decline & delete this signup" onclick="declineClient(${c.id})">Decline</button>
+        </div></td>
+      </tr>`;
+    }
     // Single clear toggle: Activate (green) when off/trial/expired, Deactivate when active.
     const statusBtn = isActive
       ? `<button class="btn sm" title="Deactivate — stop this client from trading" onclick="act(${c.id},'deactivate')">Deactivate</button>`
@@ -514,6 +554,67 @@ async function del(id){
   const c=(window._clients||[]).find(x=>x.id===id);
   if(!confirm(`Delete client "${c?c.name:id}"? This also removes their MetaApi account.`)) return;
   try{ await api(`/api/clients/${id}`, "DELETE"); toast("Deleted","ok"); loadAll(); }
+  catch(e){ toast(e.message,"err"); }
+}
+
+/* ---------- SIGNUP APPROVALS ---------- */
+async function approveClient(id){
+  if(!confirm("Approve this signup? Their MetaApi account will be provisioned and they'll receive an approval email.")) return;
+  try{ await api(`/api/clients/${id}/approve`,"POST"); toast("Client approved + notified","ok"); loadAll(); }
+  catch(e){ toast(e.message,"err"); }
+}
+async function declineClient(id){
+  if(!confirm("Decline this signup? The account is DELETED — they will not be able to log in and must sign up again.")) return;
+  try{ await api(`/api/clients/${id}/decline`,"POST"); toast("Signup declined and removed","ok"); loadAll(); }
+  catch(e){ toast(e.message,"err"); }
+}
+
+/* ---------- SUPPORT (admin) ---------- */
+let adminTicket=null;
+async function loadTicketsAdmin(){
+  const rows = await api("/api/tickets");
+  const open = rows.filter(t=>t.status==="open").length;
+  const badge = document.getElementById("ticketBadge");
+  badge.textContent = open; badge.classList.toggle("hidden", open===0);
+  document.getElementById("ticketsEmpty").classList.toggle("hidden", rows.length>0);
+  document.getElementById("adminTicketList").innerHTML = rows.map(t=>`
+    <div style="padding:10px 12px;border:1px solid ${adminTicket===t.id?'var(--cyan)':'var(--line)'};border-radius:10px;margin-bottom:8px;cursor:pointer;"
+         onclick="openAdminTicket(${t.id})">
+      <b>${esc(t.subject)}</b> <span class="pill ${t.status==='open'?'active':'inactive'}">${t.status}</span>
+      ${t.last_sender==='client'?'<span class="pill trial">needs reply</span>':''}
+      <br><small class="muted">${esc(t.client_name)} · ${t.messages} msg · ${fmt(t.updated_at)}</small>
+    </div>`).join("");
+}
+async function openAdminTicket(id){
+  adminTicket=id;
+  const t = await api(`/api/tickets/${id}`);
+  document.getElementById("adminChatTitle").textContent = `${t.subject} — ${t.client_name}`;
+  document.getElementById("closeTicketBtn").classList.toggle("hidden", t.status!=="open");
+  document.getElementById("adminChatInput").classList.remove("hidden");
+  document.getElementById("adminChatInput").style.display="flex";
+  document.getElementById("adminChatMsgs").innerHTML = t.messages.map(m=>`
+    <div style="max-width:82%;margin-bottom:9px;padding:9px 12px;border-radius:10px;font-size:13px;
+                ${m.sender==='admin'?'margin-left:auto;background:rgba(32,227,255,.1);border:1px solid rgba(32,227,255,.2);':'background:#141d29;border:1px solid var(--line);'}">
+      ${esc(m.body||"")}
+      ${(m.images||[]).map(i=>`<img src="${i}" style="max-width:140px;border-radius:7px;display:block;margin-top:6px;cursor:pointer;" onclick="window.open('${i}')">`).join("")}
+      <div class="muted" style="font-size:10.5px;margin-top:4px;">${m.sender==='admin'?'You (support)':'Client'} · ${fmt(m.time)}</div>
+    </div>`).join("");
+  const box=document.getElementById("adminChatMsgs"); box.scrollTop=box.scrollHeight;
+  loadTicketsAdmin();
+}
+async function sendAdminReply(){
+  if(!adminTicket) return;
+  const inp=document.getElementById("adminReply");
+  const body=inp.value.trim(); if(!body) return;
+  try{
+    await api(`/api/tickets/${adminTicket}/reply`,"POST",{body});
+    inp.value=""; openAdminTicket(adminTicket);
+    toast("Reply sent — client notified","ok");
+  }catch(e){ toast(e.message,"err"); }
+}
+async function closeTicket(){
+  if(!adminTicket) return;
+  try{ await api(`/api/tickets/${adminTicket}/close`,"POST"); toast("Ticket closed","ok"); openAdminTicket(adminTicket); }
   catch(e){ toast(e.message,"err"); }
 }
 
@@ -766,7 +867,7 @@ async function delSymbol(id){
 
 async function loadAll(){
   try{
-    await Promise.all([loadStats(), loadClients(), loadSymbols(), loadSignals(), loadActivity(), loadListener()]);
+    await Promise.all([loadStats(), loadClients(), loadSymbols(), loadSignals(), loadActivity(), loadListener(), loadTicketsAdmin()]);
   }catch(e){ toast(e.message,"err"); }
 }
 

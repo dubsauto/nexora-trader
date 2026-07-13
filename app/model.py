@@ -52,6 +52,22 @@ class Client(Base):
     name = Column(String(255), nullable=False)
     note = Column(Text, nullable=True)
 
+    # Client-portal identity (signups). Admin-created clients may leave these
+    # empty until the client registers.
+    email = Column(String(190), nullable=True)
+    client_password_hash = Column(String(255), nullable=True)
+    gender = Column(String(10), nullable=True)            # male/female
+
+    # 'approved'  -> full access (admin-created default)
+    # 'pending'   -> self-signup awaiting admin approval (portal locked)
+    approval_status = Column(String(16), default="approved")
+
+    # Last-known account metrics (synced opportunistically by the engine
+    # whenever it holds a live connection) for the portal overview.
+    last_balance = Column(Float, nullable=True)
+    last_equity = Column(Float, nullable=True)
+    last_synced_at = Column(DateTime, nullable=True)
+
     # MT5 credentials (provided by the client once)
     login = Column(String(64), nullable=False)          # MT5 account number
     password = Column(Text, nullable=False)             # investor/master password
@@ -241,6 +257,77 @@ class Symbol(Base):
 
     def alias_list(self):
         return [a.strip() for a in (self.aliases or "").split(",") if a.strip()]
+
+
+# =========================================================
+# CLIENT PORTAL — notifications, support tickets, pw reset
+# =========================================================
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    title = Column(String(120), nullable=False)
+    body = Column(Text, nullable=True)
+    read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Ticket(Base):
+    __tablename__ = "tickets"
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    subject = Column(String(200), nullable=False)
+    status = Column(String(12), default="open")      # open / closed
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    messages = relationship("TicketMessage", back_populates="ticket",
+                            cascade="all, delete-orphan",
+                            order_by="TicketMessage.created_at")
+
+
+class TicketMessage(Base):
+    __tablename__ = "ticket_messages"
+
+    id = Column(Integer, primary_key=True)
+    ticket_id = Column(Integer, ForeignKey("tickets.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    sender = Column(String(8), nullable=False)       # client / admin
+    body = Column(Text, nullable=True)
+    images = Column(JSON, default=list)              # up to 3 data-URLs
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    ticket = relationship("Ticket", back_populates="messages")
+
+
+class PasswordReset(Base):
+    __tablename__ = "password_resets"
+
+    token = Column(String(64), primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"),
+                       nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    used = Column(Boolean, default=False)
+
+
+# =========================================================
+# ACCOUNT SNAPSHOTS — balance/equity captured whenever the engine (or a
+# client Refresh) has a live connection. Powers "Profit Today" (vs the first
+# snapshot of the UTC day) and future balance/equity charts.
+# =========================================================
+class AccountSnapshot(Base):
+    __tablename__ = "account_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    balance = Column(Float, nullable=True)
+    equity = Column(Float, nullable=True)
+    taken_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
 # =========================================================

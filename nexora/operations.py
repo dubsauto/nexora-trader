@@ -171,6 +171,30 @@ async def close_runner_for_all() -> dict:
     return {"success": True, "clients": len(ids), "closed": total}
 
 
+async def refresh_account(client_id: int) -> dict:
+    """Client-requested balance/equity refresh: deploy → read → undeploy, via
+    the shared reference-counted manager (safe alongside an active signal)."""
+    from nexora import metrics
+    db = SessionLocal()
+    try:
+        c = db.query(Client).get(client_id)
+        if not c or not c.metaapi_account_id:
+            return {"success": False, "message": "client not provisioned"}
+        acc_id = c.metaapi_account_id
+    finally:
+        db.close()
+
+    async def _do(conn):
+        info = await conn.get_account_information()
+        return {"success": True, "balance": info.get("balance"),
+                "equity": info.get("equity")}
+
+    result = await _with_connection(acc_id, _do)
+    if result.get("success"):
+        metrics.record_metrics(client_id, result.get("balance"), result.get("equity"))
+    return result
+
+
 async def close_all_for_expired():
     """Force-close positions for clients that just expired (opt-in)."""
     db = SessionLocal()

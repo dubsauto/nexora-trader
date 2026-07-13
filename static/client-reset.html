@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXORA — Reset Password</title>
+<style>
+  :root{ --bg:#0d0d0f; --panel:#151518; --line:#26262b; --text:#e8e6e3;
+         --muted:#8a8791; --orange:#f97316; --orange2:#fb923c; --red:#ef4444; --green:#22c55e; }
+  *{ box-sizing:border-box; margin:0; }
+  body{ min-height:100vh; display:flex; align-items:center; justify-content:center;
+        background:radial-gradient(900px 500px at 70% -10%, #1c1410, var(--bg));
+        color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; padding:20px; }
+  .card{ width:100%; max-width:400px; background:var(--panel); border:1px solid var(--line);
+         border-radius:18px; padding:34px 30px; box-shadow:0 24px 60px rgba(0,0,0,.5); }
+  .brand{ text-align:center; margin-bottom:22px; }
+  .brand .logo{ width:48px; height:48px; margin:0 auto 10px; border-radius:13px;
+     background:linear-gradient(135deg,var(--orange),var(--orange2));
+     display:flex; align-items:center; justify-content:center; font-size:22px; }
+  .brand h1{ font-size:18px; letter-spacing:1px; } .brand h1 span{ color:var(--orange); }
+  .brand p{ color:var(--muted); font-size:12.5px; margin-top:4px; }
+  label{ display:block; font-size:12px; color:var(--muted); margin:14px 0 6px; }
+  input{ width:100%; background:#0e0e11; color:var(--text); border:1px solid var(--line);
+         border-radius:10px; padding:12px 14px; font-size:14px; outline:none; }
+  input:focus{ border-color:var(--orange); box-shadow:0 0 0 3px rgba(249,115,22,.15); }
+  .pw-wrap{ position:relative; }
+  .pw-wrap input{ padding-right:44px; }
+  .pw-eye{ position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none;
+    border:none; cursor:pointer; font-size:16px; padding:6px; color:var(--muted); line-height:1; }
+  .pw-eye:hover{ color:var(--orange); }
+  .btn{ width:100%; margin-top:22px; padding:13px; border:none; border-radius:10px;
+        background:linear-gradient(135deg,var(--orange),var(--orange2)); color:#111;
+        font-weight:700; font-size:15px; cursor:pointer; }
+  .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  .links{ text-align:center; margin-top:15px; font-size:13px; }
+  .links a{ color:var(--orange); text-decoration:none; }
+  .alert{ margin-top:14px; padding:10px 13px; border-radius:9px; font-size:13px; display:none; }
+  .alert.err{ display:block; background:rgba(239,68,68,.1); border:1px solid rgba(239,68,68,.3); color:#fca5a5; }
+  .alert.ok{ display:block; background:rgba(34,197,94,.1); border:1px solid rgba(34,197,94,.3); color:#86efac; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="brand">
+    <div class="logo">🔑</div>
+    <h1>NEXORA <span>AI TRADER</span></h1>
+    <p id="subtitle">Reset your password</p>
+  </div>
+
+  <!-- mode 1: request a reset link -->
+  <form id="requestForm">
+    <label>Your account email</label>
+    <input id="email" type="email" required placeholder="you@example.com">
+    <div class="alert" id="alert1"></div>
+    <button class="btn" id="btn1" type="submit">Send Reset Link</button>
+    <div class="links"><a href="/">Back to login</a></div>
+  </form>
+
+  <!-- mode 2: set a new password (?token=...) -->
+  <form id="resetForm" style="display:none;">
+    <label>New password</label>
+    <div class="pw-wrap">
+      <input id="password" type="password" required minlength="6" placeholder="min. 6 characters">
+      <button type="button" class="pw-eye" onclick="togglePw('password',this)" aria-label="Show password">👁</button>
+    </div>
+    <label>Confirm new password</label>
+    <div class="pw-wrap">
+      <input id="password2" type="password" required minlength="6">
+      <button type="button" class="pw-eye" onclick="togglePw('password2',this)" aria-label="Show password">👁</button>
+    </div>
+    <div class="alert" id="alert2"></div>
+    <button class="btn" id="btn2" type="submit">Set New Password</button>
+    <div class="links"><a href="/">Back to login</a></div>
+  </form>
+</div>
+
+<script>
+function togglePw(id,btn){ const i=document.getElementById(id);
+  if(i.type==="password"){ i.type="text"; btn.textContent="🙈"; }
+  else{ i.type="password"; btn.textContent="👁"; } }
+const token=new URLSearchParams(location.search).get("token");
+if(token){
+  document.getElementById("requestForm").style.display="none";
+  document.getElementById("resetForm").style.display="block";
+  document.getElementById("subtitle").textContent="Choose a new password";
+}
+
+document.getElementById("requestForm").addEventListener("submit", async (e)=>{
+  e.preventDefault();
+  const a=document.getElementById("alert1"), b=document.getElementById("btn1");
+  a.className="alert"; b.disabled=true; b.textContent="Sending...";
+  try{
+    const r=await fetch("/client/forgot",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({email:document.getElementById("email").value.trim()})});
+    const d=await r.json();
+    a.textContent=d.message||"If that email exists, a reset link has been sent.";
+    a.className="alert ok";
+  }catch(_){ a.textContent="Connection error — please try again."; a.className="alert err"; }
+  b.disabled=false; b.textContent="Send Reset Link";
+});
+
+document.getElementById("resetForm").addEventListener("submit", async (e)=>{
+  e.preventDefault();
+  const a=document.getElementById("alert2"), b=document.getElementById("btn2");
+  const p1=document.getElementById("password").value, p2=document.getElementById("password2").value;
+  a.className="alert";
+  if(p1!==p2){ a.textContent="Passwords do not match."; a.className="alert err"; return; }
+  b.disabled=true; b.textContent="Saving...";
+  try{
+    const r=await fetch("/client/reset",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({token, password:p1})});
+    const d=await r.json();
+    if(r.ok){ a.textContent=d.message+" Redirecting..."; a.className="alert ok";
+              setTimeout(()=>location.href="/", 1800); }
+    else{ a.textContent=d.detail||"Reset failed."; a.className="alert err"; }
+  }catch(_){ a.textContent="Connection error — please try again."; a.className="alert err"; }
+  b.disabled=false; b.textContent="Set New Password";
+});
+</script>
+</body>
+</html>

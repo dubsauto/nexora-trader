@@ -25,6 +25,7 @@ from app.model import Signal, Client, TradeGroup, ActivityLog, Symbol
 from app.services.trading import trader
 from nexora.deploy_manager import deploy_manager
 from nexora import symbol_resolver
+from nexora import metrics
 
 
 # ─────────────────────────────────────────────────────────────
@@ -227,6 +228,16 @@ class TradeEngine:
                      f"No eligible broker offers '{sd.symbol}' — signal dropped",
                      signal_id=signal_id)
                 return
+
+            # ---- opportunistic account sync for the client portal (best-effort,
+            #      we already hold live connections so this is nearly free) ----
+            for c in active:
+                try:
+                    info = await asyncio.wait_for(
+                        connections[c.account_id].get_account_information(), timeout=5)
+                    metrics.record_metrics(c.id, info.get("balance"), info.get("equity"))
+                except Exception:
+                    pass
 
             # ---- entry: immediate (market) opens right away; zone signals wait ----
             if sd.immediate:

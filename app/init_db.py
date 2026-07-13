@@ -29,6 +29,13 @@ _COLUMN_ADDITIONS = [
     ("clients", "symbol_overrides", "JSON"),
     ("clients", "resolved_symbols", "JSON"),
     ("signals", "immediate", "BOOLEAN DEFAULT FALSE"),
+    ("clients", "email", "VARCHAR(190)"),
+    ("clients", "client_password_hash", "VARCHAR(255)"),
+    ("clients", "gender", "VARCHAR(10)"),
+    ("clients", "approval_status", "VARCHAR(16) DEFAULT 'approved'"),
+    ("clients", "last_balance", "FLOAT"),
+    ("clients", "last_equity", "FLOAT"),
+    ("clients", "last_synced_at", "TIMESTAMP"),
 ]
 
 

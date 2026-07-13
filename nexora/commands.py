@@ -53,6 +53,8 @@ async def _run(action: str, client_id):
         return await operations.close_all_for_all()
     if action == "close_runner_bulk":
         return await operations.close_runner_for_all()
+    if action == "refresh_account":
+        return await operations.refresh_account(client_id)
     return {"success": False, "message": f"unknown action: {action}"}
 
 

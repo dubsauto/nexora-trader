@@ -13,7 +13,9 @@ from sqlalchemy import desc
 from app.database import get_db
 from app.auth import get_current_user, hash_password
 from app.model import AdminUser
-from app.model import Client, Signal, TradeGroup, ActivityLog, Command, Symbol, Setting
+from app.model import (Client, Signal, TradeGroup, ActivityLog, Command,
+                       Symbol, Setting, Notification, Ticket, TicketMessage)
+from nexora import emailer
 from app.services.account_management import account_manager
 from nexora import config
 
@@ -37,6 +39,8 @@ def _client_dict(c: Client) -> dict:
         "id": c.id,
         "name": c.name,
         "note": c.note,
+        "email": c.email,
+        "approval_status": c.approval_status or "approved",
         "login": c.login,
         "server": c.server,
         "status": c.status,
@@ -138,6 +142,9 @@ async def stats(db: Session = Depends(get_db), user=Depends(get_current_user)):
         "inactive": sum(1 for c in clients if c.status == "inactive"),
         "trading_on": sum(1 for c in clients
                           if c.trading_enabled and c.status in ("trial", "active")),
+        "pending_approval": sum(1 for c in clients
+                                if (c.approval_status or "approved") == "pending"),
+        "open_tickets": db.query(Ticket).filter(Ticket.status == "open").count(),
     }
 
 
@@ -300,12 +307,79 @@ async def delete_client(client_id: int, db: Session = Depends(get_db),
 # ─────────────────────────────────────────────────────────────
 # LIFECYCLE ACTIONS
 # ─────────────────────────────────────────────────────────────
+@router.post("/clients/{client_id}/approve")
+async def approve_client(client_id: int, db: Session = Depends(get_db),
+                         user=Depends(get_current_user)):
+    c = db.query(Client).get(client_id)
+    if not c:
+        raise HTTPException(404, "Client not found")
+    if (c.approval_status or "approved") != "pending":
+        return _client_dict(c)
+
+    c.approval_status = "approved"
+    db.commit()
+
+    # Provision the MetaApi account now (signups are not provisioned until approved)
+    if not c.metaapi_account_id:
+        prov = await account_manager.add_account(
+            name=f"NEXORA-{c.id}-{c.name}", server=c.server,
+            login=str(c.login), password=c.password,
+            manual_trades=False, use_dedicated_ip=config.USE_DEDICATED_IP,
+            magic=c.magic or 0)
+        if prov.get("success"):
+            c.metaapi_account_id = prov["account_id"]
+            c.connection_note = "provisioned"
+            try:
+                await account_manager.undeploy(c.metaapi_account_id)
+                c.deploy_state = "undeployed"
+            except Exception as e:
+                print(f"[Admin] undeploy after approval failed: {e}")
+        else:
+            c.connection_note = f"provision failed: {prov.get('message')}"
+        db.commit()
+
+    # In-portal notification + approval email
+    db.add(Notification(client_id=c.id, title="Account approved 🎉",
+                        body="Your account has been approved. Your dashboard is now unlocked."))
+    _log(db, _actor(user), "approve", f"{c.name}: signup approved", c.id)
+    db.commit()
+    if c.email:
+        first = (c.name or "").split(" ")[0] or "there"
+        await emailer.send_approval_email(c.email, first)
+    return _client_dict(c)
+
+
+@router.post("/clients/{client_id}/decline")
+async def decline_client(client_id: int, db: Session = Depends(get_db),
+                         user=Depends(get_current_user)):
+    """Decline a signup: the account is destroyed entirely — the client can no
+    longer log in and must sign up again."""
+    c = db.query(Client).get(client_id)
+    if not c:
+        raise HTTPException(404, "Client not found")
+    if (c.approval_status or "approved") != "pending":
+        raise HTTPException(400, "Only pending signups can be declined")
+    name, acc_id = c.name, c.metaapi_account_id
+    db.delete(c)
+    db.commit()
+    if acc_id:
+        try:
+            await account_manager.remove_account(acc_id)
+        except Exception as e:
+            print(f"[Admin] remove_account on decline error: {e}")
+    _log(db, _actor(user), "decline", f"{name}: signup declined and removed", client_id)
+    db.commit()
+    return {"success": True}
+
+
 @router.post("/clients/{client_id}/start-trial")
 async def start_trial(client_id: int, db: Session = Depends(get_db),
                       user=Depends(get_current_user)):
     c = db.query(Client).get(client_id)
     if not c:
         raise HTTPException(404, "Client not found")
+    if (c.approval_status or "approved") == "pending":
+        raise HTTPException(400, "Approve this client first")
     now = datetime.utcnow()
     c.status = "trial"
     c.channel = "trial"
@@ -325,6 +399,8 @@ async def activate_license(client_id: int, data: dict = None, db: Session = Depe
     c = db.query(Client).get(client_id)
     if not c:
         raise HTTPException(404, "Client not found")
+    if (c.approval_status or "approved") == "pending":
+        raise HTTPException(400, "Approve this client first")
     data = data or {}
     days = int(data.get("days", config.DEFAULT_LICENSE_DAYS))
     now = datetime.utcnow()
@@ -548,6 +624,76 @@ async def list_signals(limit: int = 50, db: Session = Depends(get_db),
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "groups": db.query(TradeGroup).filter(TradeGroup.signal_id == s.id).count(),
     } for s in rows]
+
+
+# ─────────────────────────────────────────────────────────────
+# SUPPORT TICKETS (admin side)
+# ─────────────────────────────────────────────────────────────
+@router.get("/tickets")
+async def admin_tickets(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    rows = db.query(Ticket).order_by(desc(Ticket.updated_at)).limit(100).all()
+    names = {c.id: c.name for c in db.query(Client).filter(
+        Client.id.in_([t.client_id for t in rows])).all()} if rows else {}
+    out = []
+    for t in rows:
+        last = t.messages[-1] if t.messages else None
+        out.append({"id": t.id, "client_id": t.client_id,
+                    "client_name": names.get(t.client_id, f"#{t.client_id}"),
+                    "subject": t.subject, "status": t.status,
+                    "messages": len(t.messages),
+                    "last_sender": last.sender if last else None,
+                    "updated_at": t.updated_at.isoformat() if t.updated_at else None})
+    return out
+
+
+@router.get("/tickets/{ticket_id}")
+async def admin_ticket_detail(ticket_id: int, db: Session = Depends(get_db),
+                              user=Depends(get_current_user)):
+    t = db.query(Ticket).get(ticket_id)
+    if not t:
+        raise HTTPException(404, "Ticket not found")
+    client = db.query(Client).get(t.client_id)
+    return {"id": t.id, "subject": t.subject, "status": t.status,
+            "client_name": client.name if client else f"#{t.client_id}",
+            "messages": [{"sender": m.sender, "body": m.body,
+                          "images": m.images or [],
+                          "time": m.created_at.isoformat() if m.created_at else None}
+                         for m in t.messages]}
+
+
+@router.post("/tickets/{ticket_id}/reply")
+async def admin_ticket_reply(ticket_id: int, data: dict, db: Session = Depends(get_db),
+                             user=Depends(get_current_user)):
+    t = db.query(Ticket).get(ticket_id)
+    if not t:
+        raise HTTPException(404, "Ticket not found")
+    body = (data.get("body") or "").strip()
+    if not body:
+        raise HTTPException(400, "Reply cannot be empty")
+    db.add(TicketMessage(ticket_id=t.id, sender="admin", body=body, images=[]))
+    t.status = "open"
+    t.updated_at = datetime.utcnow()
+    # notify the client (bell counter + email)
+    db.add(Notification(client_id=t.client_id,
+                        title=f"Support replied: {t.subject[:60]}",
+                        body=body[:300]))
+    db.commit()
+    client = db.query(Client).get(t.client_id)
+    if client and client.email:
+        first = (client.name or "").split(" ")[0] or "there"
+        await emailer.send_ticket_reply_email(client.email, first, t.subject)
+    return {"success": True}
+
+
+@router.post("/tickets/{ticket_id}/close")
+async def admin_ticket_close(ticket_id: int, db: Session = Depends(get_db),
+                             user=Depends(get_current_user)):
+    t = db.query(Ticket).get(ticket_id)
+    if not t:
+        raise HTTPException(404, "Ticket not found")
+    t.status = "closed"
+    db.commit()
+    return {"success": True}
 
 
 @router.get("/activity")
