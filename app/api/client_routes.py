@@ -55,6 +55,20 @@ def _log(db, action, message, client_id=None):
 
 
 # ─────────────────────────────────────────────────────────────
+# PUBLIC (no auth) — landing-page live statistics
+# ─────────────────────────────────────────────────────────────
+@router.get("/public/stats")
+async def public_stats(db: Session = Depends(get_db)):
+    """Real platform numbers for the landing page (used when live stats are
+    switched on there). Only aggregate counts — nothing sensitive."""
+    active = db.query(Client).filter(Client.status.in_(["trial", "active"])).count()
+    executed = db.query(Signal).filter(Signal.state.in_(["filled", "done"])).count()
+    total = db.query(Signal).count()
+    return {"active_clients": active, "signals_executed": executed,
+            "live_signals": total}
+
+
+# ─────────────────────────────────────────────────────────────
 # AUTH
 # ─────────────────────────────────────────────────────────────
 @router.post("/client/signup")
