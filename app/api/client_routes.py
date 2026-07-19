@@ -73,7 +73,7 @@ async def public_stats(db: Session = Depends(get_db)):
 # ─────────────────────────────────────────────────────────────
 @router.post("/client/signup")
 async def client_signup(data: dict, db: Session = Depends(get_db)):
-    required = ["full_name", "gender", "email", "password",
+    required = ["full_name", "gender", "email", "phone", "password",
                 "mt5_login", "mt5_password", "server"]
     for f in required:
         if not (data.get(f) or "").strip():
@@ -93,6 +93,7 @@ async def client_signup(data: dict, db: Session = Depends(get_db)):
     c = Client(
         name=data["full_name"].strip(),
         email=email,
+        phone=data["phone"].strip(),
         gender=gender,
         client_password_hash=hash_password(data["password"]),
         login=str(data["mt5_login"]).strip(),
@@ -191,8 +192,10 @@ async def me(db: Session = Depends(get_db), payload=Depends(get_current_client))
 @router.get("/client-api/dashboard")
 async def dashboard(db: Session = Depends(get_db), payload=Depends(get_current_client)):
     c = _client_or_404(db, payload)
-    if c.approval_status != "approved":
-        raise HTTPException(403, "Account pending approval")
+    # Pending clients CAN load the dashboard: they see their MT5 connection
+    # details (login/server) and a "waiting for approval" status, but no live
+    # account metrics (the account is not provisioned until approval).
+    pending = c.approval_status != "approved"
 
     expiry = None
     if c.status == "trial" and c.trial_expires_at:
@@ -202,14 +205,35 @@ async def dashboard(db: Session = Depends(get_db), payload=Depends(get_current_c
 
     bot_active = bool(c.trading_enabled and c.status in ("trial", "active"))
 
+    # Most recent trade this client's account actually opened
+    last_group = (db.query(TradeGroup)
+                  .filter(TradeGroup.client_id == c.id,
+                          TradeGroup.opened_at.isnot(None))
+                  .order_by(desc(TradeGroup.opened_at)).first())
+    last_trade_at = last_group.opened_at.isoformat() if last_group else None
+
+    if pending:
+        conn_status = "waiting_approval"
+    elif c.status not in ("trial", "active"):
+        # trial ended / VIP expired / admin-paused -> not connected for trading
+        conn_status = "disconnected"
+    elif c.metaapi_account_id:
+        conn_status = "connected"
+    else:
+        conn_status = "disconnected"
+
     return {
-        "balance": c.last_balance, "equity": c.last_equity,
-        "profit_today": metrics.profit_today(db, c),
-        "synced_at": c.last_synced_at.isoformat() if c.last_synced_at else None,
+        "balance": None if pending else c.last_balance,
+        "equity": None if pending else c.last_equity,
+        "profit_today": None if pending else metrics.profit_today(db, c),
+        "synced_at": c.last_synced_at.isoformat() if (c.last_synced_at and not pending) else None,
         "bot_status": "active" if bot_active else "paused",
         "broker": c.server, "server": c.server, "mt5_login": c.login,
         "status": c.status, "channel": c.channel, "license_expiry": expiry,
         "connected": bool(c.metaapi_account_id),
+        "connection_status": conn_status, "pending": pending,
+        "last_trade": last_trade_at,
+        "trading_enabled": bool(c.trading_enabled),
         "lot_size": c.lot_size, "risk_profile": c.risk_profile,
     }
 
@@ -242,8 +266,6 @@ async def refresh_metrics(db: Session = Depends(get_db),
 async def update_connection(data: dict, db: Session = Depends(get_db),
                             payload=Depends(get_current_client)):
     c = _client_or_404(db, payload)
-    if c.approval_status != "approved":
-        raise HTTPException(403, "Account pending approval")
 
     new_login = str(data.get("login") or c.login).strip()
     new_server = (data.get("server") or c.server).strip()
@@ -260,6 +282,16 @@ async def update_connection(data: dict, db: Session = Depends(get_db),
     c.server = new_server
     if new_password:
         c.password = new_password
+
+    # Pending accounts are NOT provisioned on MetaApi until an admin approves
+    # them (approval provisions using these fields). Just persist the details.
+    if c.approval_status != "approved":
+        _log(db, "connection_update",
+             f"{c.name}: MT5 details updated by client (pending approval)", c.id)
+        db.commit()
+        return {"success": True, "connected": False,
+                "message": "Saved. Your account will be connected once your "
+                           "profile is approved."}
 
     # Re-provision when the account identity changed; update creds otherwise.
     from app.services.account_management import account_manager
@@ -325,7 +357,11 @@ def _trade_row(g: TradeGroup, sig: Signal):
         "symbol": sig.symbol if sig else None,
         "direction": sig.direction if sig else None,
         "lot": g.lot, "state": g.state,
+        "entry_price": g.entry_price,
+        "close_price": g.close_price,
+        "profit": g.profit,
         "opened_at": g.opened_at.isoformat() if g.opened_at else None,
+        "closed_at": g.closed_at.isoformat() if g.closed_at else None,
         "tp1_at": g.tp1_at.isoformat() if g.tp1_at else None,
     }
 

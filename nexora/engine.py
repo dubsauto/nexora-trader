@@ -26,6 +26,7 @@ from app.services.trading import trader
 from nexora.deploy_manager import deploy_manager
 from nexora import symbol_resolver
 from nexora import metrics
+from nexora import trade_history
 
 
 # ─────────────────────────────────────────────────────────────
@@ -120,6 +121,7 @@ class CliData:
     lot_size: float
     symbol_overrides: dict
     resolved_symbols: dict
+    positions: int = 3      # trades opened per signal for this client
 
 
 class TradeEngine:
@@ -165,7 +167,8 @@ class TradeEngine:
                 eligible = [
                     CliData(c.id, c.name, c.metaapi_account_id, c.risk_profile,
                             c.lot_size or 0.01, dict(c.symbol_overrides or {}),
-                            dict(c.resolved_symbols or {}))
+                            dict(c.resolved_symbols or {}),
+                            int(c.positions_per_signal or config.POSITIONS_PER_SIGNAL))
                     for c in clients
                     if c.is_eligible(sd.channel) and c.metaapi_account_id
                 ]
@@ -238,6 +241,12 @@ class TradeEngine:
                     metrics.record_metrics(c.id, info.get("balance"), info.get("equity"))
                 except Exception:
                     pass
+                # capture outcomes of PRIOR trades (e.g. a runner that closed
+                # while the account was undeployed) now that we're connected
+                try:
+                    await trade_history.sync_client_history(connections[c.account_id], c.id)
+                except Exception:
+                    pass
 
             # ---- entry: immediate (market) opens right away; zone signals wait ----
             if sd.immediate:
@@ -258,6 +267,14 @@ class TradeEngine:
 
             # ---- manage TP1 (no DB session held across the loop) ----
             await self._manage_tp1(sd, active, connections, resolved)
+
+            # capture this signal's trade outcomes (entry price + realized P/L of
+            # the closed legs) while we still hold the connections
+            for c in active:
+                try:
+                    await trade_history.sync_client_history(connections[c.account_id], c.id)
+                except Exception:
+                    pass
             _set_signal_state(signal_id, "done")
 
         except Exception as e:
@@ -325,11 +342,12 @@ class TradeEngine:
             await asyncio.sleep(1.5)
 
     # ============================================================
-    # OPEN 3 POSITIONS FOR ONE CLIENT
+    # OPEN N POSITIONS FOR ONE CLIENT (per-client count, default 3)
     # ============================================================
     async def _open_positions(self, sd, client, conn, broker_symbol):
         mult = config.risk_multiplier(client.risk_profile)
         lot = round((client.lot_size or 0.01) * mult, 2)
+        count = max(1, int(client.positions or config.POSITIONS_PER_SIGNAL))
 
         # create the group first (short session) to get a unique per-group magic
         db = SessionLocal()
@@ -348,7 +366,7 @@ class TradeEngine:
 
         # place orders (NO db session held during the network calls)
         tickets, opened, last_error = [], 0, None
-        for i in range(config.POSITIONS_PER_SIGNAL):
+        for i in range(count):
             comment = f"{config.ORDER_COMMENT_PREFIX}_{sd.id}_{i+1}"
             fn = trader.buy if sd.direction == "BUY" else trader.sell
             res = await fn(conn, broker_symbol, lot, sl=sd.sl, tp=None,
@@ -381,7 +399,7 @@ class TradeEngine:
                  client_id=client.id, signal_id=sd.id)
         else:
             _log("trade", "opened",
-                 f"{client.name}: opened {opened}/{config.POSITIONS_PER_SIGNAL} "
+                 f"{client.name}: opened {opened}/{count} "
                  f"{sd.direction} @ lot {lot} (magic {magic})",
                  client_id=client.id, signal_id=sd.id)
 

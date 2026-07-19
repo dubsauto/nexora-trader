@@ -69,6 +69,7 @@
         </select></div>
     </div>
     <label>Email</label><input id="email" type="email" required placeholder="you@example.com">
+    <label>Contact number</label><input id="phone" type="tel" required placeholder="e.g. +94 77 397 3668">
     <label>Password</label>
     <div class="pw-wrap">
       <input id="password" type="password" required minlength="6" placeholder="min. 6 characters">
@@ -126,7 +127,7 @@ document.getElementById("f").addEventListener("submit", async (e)=>{
   const a=document.getElementById("alert"), b=document.getElementById("btn");
   a.className="alert"; b.disabled=true; b.textContent="Creating account...";
   const payload={};
-  ["full_name","gender","email","password","mt5_login","mt5_password","server"]
+  ["full_name","gender","email","phone","password","mt5_login","mt5_password","server"]
     .forEach(id=>payload[id]=document.getElementById(id).value.trim());
   try{
     const r=await fetch("/client/signup",{method:"POST",

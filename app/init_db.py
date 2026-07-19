@@ -36,6 +36,13 @@ _COLUMN_ADDITIONS = [
     ("clients", "last_balance", "FLOAT"),
     ("clients", "last_equity", "FLOAT"),
     ("clients", "last_synced_at", "TIMESTAMP"),
+    ("clients", "phone", "VARCHAR(32)"),
+    ("clients", "positions_per_signal", "INTEGER"),
+    ("commands", "payload", "JSON"),
+    ("trade_groups", "closed_at", "TIMESTAMP"),
+    ("trade_groups", "entry_price", "FLOAT"),
+    ("trade_groups", "close_price", "FLOAT"),
+    ("trade_groups", "profit", "FLOAT"),
 ]
 
 

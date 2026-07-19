@@ -64,6 +64,12 @@ async def close_all_for_client(client_id: int) -> dict:
             r = await trader.close_position(conn, p.get("id"))
             if r.get("success"):
                 closed += 1
+        # capture the just-closed trades' P/L while still connected
+        try:
+            from nexora import trade_history
+            await trade_history.sync_client_history(conn, client_id)
+        except Exception:
+            pass
         return {"success": True, "closed": closed}
 
     result = await _with_connection(acc_id, _do)
@@ -117,6 +123,11 @@ async def close_runner_for_client(client_id: int) -> dict:
                 r = await trader.close_position(conn, p.get("id"))
                 if r.get("success"):
                     closed += 1
+        try:
+            from nexora import trade_history
+            await trade_history.sync_client_history(conn, client_id)
+        except Exception:
+            pass
         return {"success": True, "closed": closed}
 
     result = await _with_connection(acc_id, _do)
@@ -186,6 +197,12 @@ async def refresh_account(client_id: int) -> dict:
 
     async def _do(conn):
         info = await conn.get_account_information()
+        # opportunistic history refresh while connected
+        try:
+            from nexora import trade_history
+            await trade_history.sync_client_history(conn, client_id)
+        except Exception:
+            pass
         return {"success": True, "balance": info.get("balance"),
                 "equity": info.get("equity")}
 
@@ -193,6 +210,64 @@ async def refresh_account(client_id: int) -> dict:
     if result.get("success"):
         metrics.record_metrics(client_id, result.get("balance"), result.get("equity"))
     return result
+
+
+async def update_sl_for_signal(signal_id) -> dict:
+    """Modify the stop-loss on every OPEN position of a signal, across all
+    clients, to the signal's current SL value. Runs per-account: deploy → modify
+    → undeploy (shared with the engine if it still holds the account).
+    Groups already at TP1 (runner at break-even) are left untouched."""
+    from app.model import Signal
+    db = SessionLocal()
+    try:
+        sig = db.query(Signal).get(signal_id)
+        if not sig:
+            return {"success": False, "message": "signal not found"}
+        new_sl = sig.sl
+        # only groups still fully open (pre-TP1) — don't override break-even runners
+        groups = (db.query(TradeGroup)
+                  .filter(TradeGroup.signal_id == signal_id,
+                          TradeGroup.state == "open").all())
+        targets = []
+        for g in groups:
+            client = db.query(Client).get(g.client_id)
+            if client and client.metaapi_account_id:
+                targets.append((client.id, client.name, client.metaapi_account_id, g.magic))
+    finally:
+        db.close()
+
+    if not targets:
+        return {"success": True, "updated": 0, "clients": 0,
+                "message": "no open positions to update"}
+
+    total = 0
+    for client_id, name, acc_id, magic in targets:
+        async def _do(conn, magic=magic):
+            try:
+                positions = await conn.get_positions()
+            except Exception as e:
+                return {"success": False, "message": str(e)}
+            updated = 0
+            for p in positions:
+                if int(p.get("magic", 0) or 0) != int(magic):
+                    continue
+                r = await trader.modify_position(conn, p.get("id"), sl=new_sl,
+                                                 tp=p.get("takeProfit"))
+                if r.get("success"):
+                    updated += 1
+            return {"success": True, "updated": updated}
+        res = await _with_connection(acc_id, _do)
+        if res.get("success"):
+            total += res.get("updated", 0)
+
+    db = SessionLocal()
+    try:
+        _log(db, "update_sl",
+             f"Signal #{signal_id}: SL updated to {new_sl} on {total} position(s) "
+             f"across {len(targets)} client(s)")
+    finally:
+        db.close()
+    return {"success": True, "updated": total, "clients": len(targets), "new_sl": new_sl}
 
 
 async def close_all_for_expired():

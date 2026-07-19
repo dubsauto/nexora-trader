@@ -148,6 +148,7 @@
     <div class="tab" data-tab="symbols" onclick="switchTab('symbols')">Symbols</div>
     <div class="tab" data-tab="signals" onclick="switchTab('signals')">Signals</div>
     <div class="tab" data-tab="support" onclick="switchTab('support')">Support <span id="ticketBadge" class="pill open hidden" style="margin-left:4px;">0</span></div>
+    <div class="tab" data-tab="announce" onclick="switchTab('announce')">Announcements</div>
     <div class="tab" data-tab="activity" onclick="switchTab('activity')">Activity Log</div>
   </div>
 
@@ -235,6 +236,41 @@
     </div>
   </div>
 
+  <!-- ANNOUNCEMENTS -->
+  <div id="tab-announce" class="hidden">
+    <div style="display:grid;grid-template-columns:1fr 1.2fr;gap:14px;">
+      <div class="panel">
+        <div class="panel-head"><div class="t">Send Announcement</div></div>
+        <div style="padding:14px;">
+          <div class="field"><label>Title</label>
+            <input id="an_title" maxlength="120" placeholder="e.g. Scheduled Maintenance">
+          </div>
+          <div class="field"><label>Message</label>
+            <textarea id="an_body" rows="5" maxlength="2000"
+              placeholder="Write the announcement clients will see in their notification bell…"></textarea>
+          </div>
+          <div class="field"><label>Send to</label>
+            <select id="an_audience">
+              <option value="all">All clients</option>
+              <option value="active">Active only (trial or VIP)</option>
+              <option value="trial">Trial clients</option>
+              <option value="vip">VIP clients</option>
+            </select>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+            <button class="btn primary" id="an_send" onclick="sendBroadcast()">Send Announcement</button>
+            <span class="muted" style="font-size:12px;">Appears in each client's notification bell.</span>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div class="t">Recent Announcements</div></div>
+        <div id="broadcastList" style="padding:12px;"></div>
+        <div class="empty hidden" id="broadcastEmpty">No announcements sent yet.</div>
+      </div>
+    </div>
+  </div>
+
   <!-- ACTIVITY -->
   <div id="tab-activity" class="hidden">
     <div class="panel">
@@ -272,9 +308,10 @@
       </div>
     </div>
     <div class="row2">
+      <div class="field"><label>Trades per signal</label><input id="c_positions" type="number" min="1" max="10" step="1" value="3" title="How many positions to open per signal (1-10). Default 3."></div>
       <div class="field"><label>Deposit amount ($)</label><input id="c_deposit" type="number" step="0.01" value="0" placeholder="e.g. 1000"></div>
-      <div class="field"><label>Note (optional)</label><input id="c_note" placeholder="internal note"></div>
     </div>
+    <div class="field"><label>Note (optional)</label><input id="c_note" placeholder="internal note"></div>
     <div class="field">
       <label>Symbol overrides (optional) — only if auto-detect fails for this broker</label>
       <input id="c_overrides" placeholder="e.g. BTCUSD=BTC/USD, XAUUSD=GOLD.spot">
@@ -373,8 +410,9 @@ function logout(){ localStorage.removeItem("token"); location.href="/admin"; }
 
 function switchTab(name){
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.tab===name));
-  ["clients","symbols","signals","support","activity"].forEach(n=>
+  ["clients","symbols","signals","support","announce","activity"].forEach(n=>
     document.getElementById("tab-"+n).classList.toggle("hidden", n!==name));
+  if(name==="announce") loadBroadcasts();
 }
 
 /* ---------- ACCOUNT SETTINGS ---------- */
@@ -467,7 +505,7 @@ function renderClients(){
     if(c.approval_status==="pending"){
       return `<tr>
         <td><b style="cursor:pointer;color:var(--cyan)" onclick="openDetail(${c.id})">${esc(c.name)}</b>
-            <br><small class="muted">${esc(c.email||"")} · signed up</small></td>
+            <br><small class="muted">${esc(c.email||"")}${c.phone?' · <a href="tel:'+esc(c.phone)+'" style="color:var(--cyan)">'+esc(c.phone)+'</a>':''} · signed up</small></td>
         <td class="mono">${esc(c.login)}<br><small class="muted">${esc(c.server)}</small></td>
         <td><span class="pill expired" style="background:rgba(255,176,32,.15);color:var(--amber)">PENDING APPROVAL</span></td>
         <td class="muted">—</td><td class="muted">—</td>
@@ -658,10 +696,13 @@ async function openDetail(id){
   const row = (label, val) => `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(27,36,48,.6);">
       <span class="muted" style="font-size:13px;">${label}</span><span style="font-weight:600;">${val}</span></div>`;
   document.getElementById("d_body").innerHTML =
+    (c.email ? row("Email", `<a href="mailto:${esc(c.email)}" style="color:var(--cyan)">${esc(c.email)}</a>`) : "") +
+    (c.phone ? row("Contact Number", `<a href="tel:${esc(c.phone)}" style="color:var(--cyan)">${esc(c.phone)}</a>`) : "") +
     row("MT5 Login", `<span class="mono">${esc(c.login)}</span>`) +
     row("Broker Server", esc(c.server)) +
     row("Deposit Amount", `$${(c.deposit||0).toLocaleString()}`) +
     row("Assigned Lot Size", `<span class="mono">${c.lot_size}</span> &times; ${c.risk_multiplier} = <b>${c.effective_lot}</b>`) +
+    row("Trades per Signal", `<b>${c.effective_positions||3}</b>`) +
     row("Risk Profile", c.risk_profile) +
     row("License Status", `<span class="pill ${c.status}">${c.status}</span>`) +
     row("Expiry Date", exp ? fmt(exp) : "—") +
@@ -703,6 +744,7 @@ function openCreate(){
   document.getElementById("c_id").value="";
   ["c_name","c_login","c_server","c_password","c_note","c_overrides"].forEach(i=>document.getElementById(i).value="");
   document.getElementById("c_lot").value="0.01";
+  document.getElementById("c_positions").value="3";
   document.getElementById("c_deposit").value="0";
   document.getElementById("c_risk").value="balanced";
   document.getElementById("c_login").disabled=false;
@@ -719,6 +761,7 @@ function openEdit(id){
   document.getElementById("c_server").value=c.server||"";
   document.getElementById("c_password").value="";
   document.getElementById("c_lot").value=c.lot_size;
+  document.getElementById("c_positions").value=c.effective_positions||3;
   document.getElementById("c_deposit").value=c.deposit||0;
   document.getElementById("c_risk").value=c.risk_profile;
   document.getElementById("c_note").value=c.note||"";
@@ -736,6 +779,7 @@ async function saveClient(){
     server:document.getElementById("c_server").value.trim(),
     password:document.getElementById("c_password").value,
     lot_size:parseFloat(document.getElementById("c_lot").value)||0.01,
+    positions_per_signal:parseInt(document.getElementById("c_positions").value)||3,
     deposit:parseFloat(document.getElementById("c_deposit").value)||0,
     symbol_overrides:textToOverrides(document.getElementById("c_overrides").value),
     risk_profile:document.getElementById("c_risk").value,
@@ -761,9 +805,24 @@ async function loadSignals(){
       <td class="mono">${esc(s.symbol||"—")}</td>
       <td><span class="pill ${s.direction.toLowerCase()}">${s.direction}${s.immediate?' NOW':''}</span></td>
       <td class="mono">${s.immediate?'<span style="color:var(--amber)">MARKET</span>':`${s.entry_low} &ndash; ${s.entry_high}`}</td>
-      <td class="mono">${s.sl}</td><td class="mono">${s.tp1}</td>
+      <td class="mono">${slCell(s)}</td><td class="mono">${s.tp1}</td>
       <td>${s.state}</td><td>${s.groups}</td>
     </tr>`).join("");
+}
+function slCell(s){
+  if(!s.sl_editable) return String(s.sl);
+  return `<span style="display:inline-flex;gap:5px;align-items:center;">
+    <input id="sl_${s.id}" type="number" step="0.01" value="${s.sl}"
+      style="width:78px;background:#0b121a;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:4px 6px;font-size:12px;">
+    <button class="btn sm" title="Update SL on all open trades" onclick="updateSignalSL(${s.id})">SL</button></span>`;
+}
+async function updateSignalSL(id){
+  const v=parseFloat(document.getElementById("sl_"+id).value);
+  if(!v||v<=0){ toast("Enter a valid stop-loss","err"); return; }
+  if(!confirm(`Update SL to ${v} on all open trades for signal #${id}?`)) return;
+  try{ const r=await api(`/api/signals/${id}/sl`,"POST",{sl:v});
+       toast(r.message||"SL update queued","ok"); setTimeout(loadAll,4000); }
+  catch(e){ toast(e.message,"err"); }
 }
 
 /* ---------- ACTIVITY ---------- */
@@ -778,6 +837,37 @@ async function loadActivity(){
       <td>${esc(r.action)}</td>
       <td>${esc(r.message||"")}</td>
     </tr>`).join("");
+}
+
+/* ---------- ANNOUNCEMENTS ---------- */
+async function sendBroadcast(){
+  const title=document.getElementById("an_title").value.trim();
+  const body=document.getElementById("an_body").value.trim();
+  const audience=document.getElementById("an_audience").value;
+  if(!title){ toast("Enter a title","err"); return; }
+  if(!body){ toast("Enter a message","err"); return; }
+  const label=document.getElementById("an_audience").selectedOptions[0].textContent;
+  if(!confirm(`Send this announcement to "${label}"?`)) return;
+  const b=document.getElementById("an_send"); b.disabled=true; b.textContent="Sending…";
+  try{
+    const r=await api("/api/notifications/broadcast","POST",{title,body,audience});
+    toast(`Announcement sent to ${r.sent} client(s)`,"ok");
+    document.getElementById("an_title").value="";
+    document.getElementById("an_body").value="";
+    loadBroadcasts();
+  }catch(e){ toast(e.message,"err"); }
+  finally{ b.disabled=false; b.textContent="Send Announcement"; }
+}
+async function loadBroadcasts(){
+  try{
+    const rows=await api("/api/notifications/broadcasts");
+    document.getElementById("broadcastEmpty").classList.toggle("hidden", rows.length>0);
+    document.getElementById("broadcastList").innerHTML = rows.map(r=>`
+      <div style="padding:10px 12px;border:1px solid var(--line);border-radius:9px;margin-bottom:8px;">
+        <div style="font-size:13px;">${esc(r.message||"")}</div>
+        <div class="muted" style="font-size:11px;margin-top:4px;">${fmt(r.ts)} · ${esc(r.actor)}</div>
+      </div>`).join("");
+  }catch(e){ /* tab may not be open */ }
 }
 
 /* ---------- utils ---------- */

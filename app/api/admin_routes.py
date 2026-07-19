@@ -29,6 +29,16 @@ def _actor(user) -> str:
     return (user or {}).get("username", "admin")
 
 
+def _clamp_positions(value):
+    """Positions-per-signal: 1-10, or None to fall back to the global default."""
+    if value in (None, "", 0):
+        return None
+    try:
+        return max(1, min(10, int(value)))
+    except (TypeError, ValueError):
+        return None
+
+
 def _log(db, actor, action, message, client_id=None):
     db.add(ActivityLog(actor=actor, category="client", action=action,
                        message=message, client_id=client_id))
@@ -40,6 +50,7 @@ def _client_dict(c: Client) -> dict:
         "name": c.name,
         "note": c.note,
         "email": c.email,
+        "phone": c.phone,
         "approval_status": c.approval_status or "approved",
         "login": c.login,
         "server": c.server,
@@ -48,6 +59,8 @@ def _client_dict(c: Client) -> dict:
         "trading_enabled": c.trading_enabled,
         "lot_size": c.lot_size,
         "risk_profile": c.risk_profile,
+        "positions_per_signal": c.positions_per_signal,
+        "effective_positions": int(c.positions_per_signal or config.POSITIONS_PER_SIGNAL),
         "deposit": c.deposit,
         "symbol_overrides": c.symbol_overrides or {},
         "resolved_symbols": c.resolved_symbols or {},
@@ -216,6 +229,7 @@ async def create_client(data: dict, db: Session = Depends(get_db), user=Depends(
         trading_enabled=True,
         lot_size=float(data.get("lot_size", 0.01)),
         risk_profile=data.get("risk_profile", "balanced"),
+        positions_per_signal=_clamp_positions(data.get("positions_per_signal")),
         deposit=float(data.get("deposit", 0) or 0),
         symbol_overrides=data.get("symbol_overrides") or {},
     )
@@ -270,6 +284,8 @@ async def update_client(client_id: int, data: dict, db: Session = Depends(get_db
         c.resolved_symbols = {}
     if "lot_size" in data:
         c.lot_size = float(data["lot_size"])
+    if "positions_per_signal" in data:
+        c.positions_per_signal = _clamp_positions(data["positions_per_signal"])
     if "deposit" in data:
         c.deposit = float(data["deposit"] or 0)
     if "symbol_overrides" in data:
@@ -623,7 +639,45 @@ async def list_signals(limit: int = 50, db: Session = Depends(get_db),
         "posted_at": s.posted_at.isoformat() if s.posted_at else None,
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "groups": db.query(TradeGroup).filter(TradeGroup.signal_id == s.id).count(),
+        "sl_editable": s.state == "filled",   # SL editable only while filled
     } for s in rows]
+
+
+@router.post("/signals/{signal_id}/sl")
+async def update_signal_sl(signal_id: int, data: dict, db: Session = Depends(get_db),
+                           user=Depends(get_current_user)):
+    """Manually change a filled signal's stop-loss and push it to every open
+    client position for that signal. Only allowed while the signal is 'filled'
+    (once it's 'done', the SL is locked)."""
+    s = db.query(Signal).get(signal_id)
+    if not s:
+        raise HTTPException(404, "Signal not found")
+    if s.state != "filled":
+        raise HTTPException(400, "Stop-loss can only be edited while the signal is 'filled'")
+    try:
+        new_sl = float(data.get("sl"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Invalid stop-loss value")
+    if new_sl <= 0:
+        raise HTTPException(400, "Stop-loss must be greater than 0")
+
+    s.sl = new_sl
+    db.commit()
+
+    # dedup any pending SL update already queued for this signal
+    existing = db.query(Command).filter(
+        Command.action == "update_sl", Command.status.in_(["pending", "running"])).all()
+    for cmd in existing:
+        if (cmd.payload or {}).get("signal_id") == signal_id:
+            cmd.result = None  # let it re-run with the newest SL (already in DB)
+    db.add(Command(action="update_sl", client_id=None,
+                   payload={"signal_id": signal_id}, requested_by=_actor(user),
+                   status="pending"))
+    _log(db, _actor(user), "update_sl",
+         f"Signal #{signal_id}: SL changed to {new_sl} — pushing to open trades", None)
+    db.commit()
+    return {"queued": True, "sl": new_sl,
+            "message": "SL updated — applying to all open trades in a few seconds."}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -694,6 +748,57 @@ async def admin_ticket_close(ticket_id: int, db: Session = Depends(get_db),
     t.status = "closed"
     db.commit()
     return {"success": True}
+
+
+# ─────────────────────────────────────────────────────────────
+# NOTIFICATION CENTER — broadcast announcements to clients' bells
+# ─────────────────────────────────────────────────────────────
+@router.post("/notifications/broadcast")
+async def broadcast_notification(data: dict, db: Session = Depends(get_db),
+                                 user=Depends(get_current_user)):
+    """Send an announcement (maintenance, update, notice) to clients. It lands
+    in each client's in-portal notification bell. Audience:
+      all    -> every client
+      active -> currently on a trial or VIP license
+      trial  -> clients on the trial channel
+      vip    -> clients on the VIP channel
+    """
+    title = (data.get("title") or "").strip()
+    body = (data.get("body") or "").strip()
+    audience = (data.get("audience") or "all").strip().lower()
+    if not title:
+        raise HTTPException(400, "Title is required")
+    if not body:
+        raise HTTPException(400, "Message is required")
+
+    q = db.query(Client)
+    if audience == "active":
+        q = q.filter(Client.status.in_(["trial", "active"]))
+    elif audience == "trial":
+        q = q.filter(Client.channel == "trial")
+    elif audience == "vip":
+        q = q.filter(Client.channel == "vip")
+    else:
+        audience = "all"
+
+    clients = q.all()
+    for c in clients:
+        db.add(Notification(client_id=c.id, title=title[:120], body=body[:2000]))
+    _log(db, _actor(user), "broadcast",
+         f"Announcement '{title[:60]}' sent to {len(clients)} client(s) [{audience}]")
+    db.commit()
+    return {"success": True, "sent": len(clients), "audience": audience}
+
+
+@router.get("/notifications/broadcasts")
+async def list_broadcasts(limit: int = 20, db: Session = Depends(get_db),
+                          user=Depends(get_current_user)):
+    """Recent announcement history (from the activity log)."""
+    rows = (db.query(ActivityLog)
+            .filter(ActivityLog.action == "broadcast")
+            .order_by(desc(ActivityLog.ts)).limit(min(limit, 100)).all())
+    return [{"ts": r.ts.isoformat() if r.ts else None,
+             "actor": r.actor, "message": r.message} for r in rows]
 
 
 @router.get("/activity")

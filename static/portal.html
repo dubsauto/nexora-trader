@@ -80,6 +80,7 @@
   .dot{ width:9px; height:9px; border-radius:50%; display:inline-block; }
   .dot.g{ background:var(--green); box-shadow:0 0 8px var(--green); }
   .dot.r{ background:var(--red); }
+  .dot.y{ background:var(--orange2); box-shadow:0 0 8px var(--orange2); }
   .mini-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
   .mini-grid.three{ grid-template-columns:repeat(3,1fr); margin-top:10px; }
   .mini{ background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:14px; }
@@ -87,6 +88,10 @@
   .mini .v{ font-size:18px; font-weight:700; margin-top:5px; }
   .mini .v.small{ font-size:14px; }
   .mini .v.g{ color:var(--green); } .mini .v.r{ color:var(--red); } .mini .v.o{ color:var(--orange); }
+  .ov-foot{ margin-top:14px; padding-top:12px; border-top:1px solid var(--line);
+    display:flex; flex-wrap:wrap; gap:6px 18px; font-size:12px; color:var(--muted); }
+  .ov-foot b{ color:var(--text); font-weight:600; }
+  .ov-foot b.on{ color:var(--green); } .ov-foot b.off{ color:var(--red); }
   .conn-row{ margin-bottom:11px; }
   .conn-row label{ display:block; font-size:11.5px; color:var(--muted); margin-bottom:5px; }
   .conn-row input{ width:100%; background:#0e0e11; color:var(--text); border:1px solid var(--line);
@@ -106,6 +111,18 @@
   .side-buy{ color:var(--green); font-weight:800; } .side-sell{ color:var(--red); font-weight:800; }
   .lr-muted{ color:var(--muted); font-size:12px; } .lr-right{ margin-left:auto; color:var(--muted); font-size:12px; }
   .empty-mini{ color:var(--muted); font-size:13px; padding:18px 4px; text-align:center; }
+
+  /* trade-history table */
+  .htab{ width:100%; border-collapse:collapse; font-size:13px; }
+  .htab th{ text-align:left; color:var(--muted); font-weight:600; font-size:10.5px;
+    text-transform:uppercase; letter-spacing:.5px; padding:9px 10px;
+    border-bottom:1px solid var(--line); white-space:nowrap; }
+  .htab td{ padding:10px; border-bottom:1px solid rgba(38,38,43,.6); white-space:nowrap; }
+  .htab tr:last-child td{ border-bottom:none; }
+  .pl-up{ color:var(--green); font-weight:700; } .pl-dn{ color:var(--red); font-weight:700; }
+  .tstate{ font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.4px;
+    padding:2px 8px; border-radius:999px; background:var(--panel2); border:1px solid var(--line); color:var(--muted); }
+  .tstate.run{ color:var(--violet); } .tstate.tp1{ color:var(--orange); } .tstate.closed{ color:var(--muted); }
 
   /* support */
   .support{ margin-top:16px; }
@@ -137,12 +154,42 @@
                      border:1px solid var(--line); }
   .attach-note{ font-size:11.5px; color:var(--muted); margin-top:5px; }
 
-  /* pending lock */
+  /* expired lock box (shared shell) */
   .pending-box{ max-width:520px; margin:80px auto; text-align:center; background:var(--panel);
     border:1px solid var(--line); border-radius:18px; padding:46px 36px; }
   .pending-box .ico{ font-size:52px; margin-bottom:14px; }
   .pending-box h2{ margin-bottom:10px; }
   .pending-box p{ color:var(--muted); font-size:14px; line-height:1.7; }
+
+  /* trial countdown banner */
+  .trial-banner{ display:flex; align-items:center; gap:14px; padding:14px 20px; margin-bottom:18px;
+    border-radius:14px; background:rgba(167,139,250,.1); border:1px solid rgba(167,139,250,.3); }
+  .trial-banner .ico{ font-size:22px; }
+  .trial-banner .txt{ flex:1; font-size:13.5px; color:var(--text); }
+  .trial-banner .txt b{ color:var(--violet); }
+  .trial-banner .time{ font-size:15px; font-weight:800; color:var(--violet); white-space:nowrap; }
+  .trial-banner.expiring{ background:rgba(239,68,68,.1); border-color:rgba(239,68,68,.35); }
+  .trial-banner.expiring .txt b, .trial-banner.expiring .time{ color:var(--red); }
+
+  /* pending-approval banner (shown in the dashboard, not a full lock) */
+  .pending-banner{ display:flex; align-items:center; gap:14px; padding:14px 20px; margin-bottom:18px;
+    border-radius:14px; background:rgba(249,115,22,.1); border:1px solid rgba(249,115,22,.32); }
+  .pending-banner .ico{ font-size:22px; }
+  .pending-banner .txt{ flex:1; font-size:13.5px; color:var(--text); line-height:1.55; }
+  .pending-banner .txt b{ color:var(--orange); }
+
+  /* expired screen */
+  .expired-box{ max-width:520px; margin:80px auto; text-align:center; background:var(--panel);
+    border:1px solid var(--line); border-radius:18px; padding:46px 36px; }
+  .expired-box .ico{ font-size:52px; margin-bottom:14px; }
+  .expired-box h2{ margin-bottom:10px; color:var(--red); }
+  .expired-box p{ color:var(--muted); font-size:14px; line-height:1.7; margin-bottom:26px; }
+  .wa-btn{ display:inline-flex; align-items:center; gap:10px; padding:13px 26px; border-radius:12px;
+    background:#25D366; color:#0b1a10; font-weight:800; font-size:14.5px; margin:6px; }
+  .wa-btn:hover{ filter:brightness(1.08); }
+  .wa-btn svg{ width:20px; height:20px; fill:#0b1a10; }
+  .expired-box .phones{ margin-top:16px; font-size:12.5px; color:var(--muted); }
+  .expired-box .phones b{ color:var(--text); }
 
   #toast{ position:fixed; bottom:22px; right:22px; background:var(--panel2); border:1px solid var(--line);
     border-left:3px solid var(--orange); border-radius:11px; padding:13px 17px; font-size:13px;
@@ -163,7 +210,7 @@
     <div class="nav-item active" data-view="dashboard" onclick="go('dashboard')">🏠 Dashboard</div>
     <div class="nav-item" data-view="profile" onclick="go('profile')">👤 Profile</div>
     <div class="nav-item" data-view="signals" onclick="go('signals')">📡 Recent Signals</div>
-    <div class="nav-item" data-view="trades" onclick="go('trades')">📊 Recent Trades</div>
+    <div class="nav-item" data-view="trades" onclick="go('trades')">📊 Trade History</div>
     <div class="nav-item" data-view="support" onclick="go('support')">💬 Support</div>
     <div class="nav-item" data-view="settings" onclick="go('settings')">⚙️ Settings</div>
     <div class="sb-foot"><div class="nav-item" onclick="logout()">🚪 Logout</div></div>
@@ -184,15 +231,18 @@
 
     <div class="notif-dd" id="notifDD"></div>
 
-    <!-- PENDING LOCK -->
-    <div id="pendingView" class="hidden">
-      <div class="pending-box">
-        <div class="ico">⏳</div>
-        <h2>Account Pending Approval</h2>
-        <p>Thanks for signing up! Your profile is currently <b style="color:var(--orange)">pending</b>
-           and waiting for admin approval.<br><br>
-           You'll receive an email as soon as your account is approved — then your full
-           dashboard will unlock automatically.</p>
+    <!-- EXPIRED LOCK -->
+    <div id="expiredView" class="hidden">
+      <div class="expired-box">
+        <div class="ico">⌛</div>
+        <h2 id="expiredTitle">Your Trial Has Expired</h2>
+        <p id="expiredText">Your free trial has ended and trading has been paused on your account.
+           Contact us on WhatsApp to upgrade to VIP and keep receiving live signals and automated trades.</p>
+        <a class="wa-btn" id="expiredWa1" href="https://wa.me/94773973668" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.71.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12.004 2C6.478 2 2.002 6.476 2.002 12c0 1.85.5 3.58 1.373 5.067L2 22l5.07-1.351A9.947 9.947 0 0 0 12.004 22C17.53 22 22 17.523 22 12S17.53 2 12.004 2zm0 18.15a8.13 8.13 0 0 1-4.15-1.137l-.298-.177-3.005.801.803-2.928-.194-.301A8.127 8.127 0 0 1 3.85 12c0-4.501 3.653-8.15 8.154-8.15 4.5 0 8.153 3.649 8.153 8.15 0 4.501-3.653 8.15-8.153 8.15z"/></svg>
+          Chat with us on WhatsApp
+        </a>
+        <div class="phones">Or reach us at <b>+94 77 397 3668</b> / <b>+94 78 451 7992</b></div>
       </div>
     </div>
 
@@ -200,6 +250,19 @@
     <div id="view-dashboard">
       <h1 class="welcome">👋 Welcome back, <span id="firstName">…</span></h1>
       <div class="sub">Here is what is happening with your account today</div>
+
+      <div id="pendingBanner" class="pending-banner hidden">
+        <div class="ico">⏳</div>
+        <div class="txt"><b>Waiting for Approval</b> — your account is being reviewed by our team.
+          You can check and update your MT5 connection details below; trading starts automatically
+          once your account is approved.</div>
+      </div>
+
+      <div id="trialBanner" class="trial-banner hidden">
+        <div class="ico">⏳</div>
+        <div class="txt"><b>Trial Plan</b> — your free trial is active</div>
+        <div class="time" id="trialTime">—</div>
+      </div>
 
       <div class="grid-21">
         <div class="card">
@@ -220,6 +283,10 @@
             <div class="mini"><div class="l">MT5 Account</div><div class="v small" id="ovLogin">—</div></div>
             <div class="mini"><div class="l">Licence Expiry</div><div class="v small" id="ovExpiry">—</div></div>
           </div>
+          <div class="ov-foot">
+            <span>Last trade: <b id="ovLastTrade">—</b></span>
+            <span>Trading status: <b id="ovTrading">—</b></span>
+          </div>
         </div>
 
         <div class="card">
@@ -234,13 +301,13 @@
         </div>
       </div>
 
-      <div class="grid-111">
+      <div class="grid-111" id="dashLowerGrid">
         <div class="card">
           <h3>Recent Signals <span class="viewall" onclick="go('signals')">View All</span></h3>
           <div id="dashSignals"></div>
         </div>
         <div class="card">
-          <h3>Recent Trades <span class="viewall" onclick="go('trades')">View All</span></h3>
+          <h3>Trade History <span class="viewall" onclick="go('trades')">View All</span></h3>
           <div id="dashTrades"></div>
         </div>
         <div class="card">
@@ -250,7 +317,7 @@
       </div>
 
       <!-- SUPPORT (on the main dashboard) -->
-      <div class="card support">
+      <div class="card support" id="dashSupportCard">
         <h3>💬 Support <span class="viewall" onclick="go('support')">Open Support Center</span></h3>
         <div class="lr-muted">Need help? Create a ticket and our team will get back to you —
           replies appear here and in your notifications.</div>
@@ -279,7 +346,7 @@
 
     <!-- TRADES -->
     <div id="view-trades" class="hidden">
-      <div class="section-title">📊 Recent Trades</div>
+      <div class="section-title">📊 Trade History</div>
       <div class="card"><div id="allTrades"></div></div>
       <div class="section-title" style="margin-top:20px;">🔴 Live Trades</div>
       <div class="card"><div id="allLive"></div></div>
@@ -360,7 +427,34 @@ function ago(iso){ if(!iso) return "—"; const s=(Date.now()-new Date(iso+"Z").
 function fmtMoney(v){ return v==null?"—":"$"+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function fmtDate(iso){ return iso? String(iso).replace("T"," ").slice(0,16):"—"; }
 
-let ME=null, APPROVED=false;
+let ME=null, APPROVED=false, PENDING=false, EXPIRED=false, TRIAL_EXPIRES=null;
+
+/* ---------- trial countdown ---------- */
+function updateTrialCountdown(){
+  const banner=document.getElementById("trialBanner");
+  if(!TRIAL_EXPIRES){ banner.classList.add("hidden"); return; }
+  banner.classList.remove("hidden");
+  const ms = new Date(TRIAL_EXPIRES+"Z").getTime() - Date.now();
+  const timeEl=document.getElementById("trialTime");
+  const txtEl=banner.querySelector(".txt");
+  if(ms<=0){
+    banner.classList.add("expiring");
+    txtEl.innerHTML = "<b>Trial Plan</b> — your free trial has ended";
+    timeEl.textContent = "Expired";
+    return;
+  }
+  const totalSec = Math.floor(ms/1000);
+  const days = Math.floor(totalSec/86400);
+  const hours = Math.floor((totalSec%86400)/3600);
+  const mins = Math.floor((totalSec%3600)/60);
+  const secs = totalSec%60;
+  txtEl.innerHTML = "<b>Trial Plan</b> — your free trial is active";
+  timeEl.textContent = days>0
+    ? `${days}d ${hours}h ${mins}m Remaining`
+    : (hours>0 ? `${hours}h ${mins}m ${secs}s Remaining` : `${mins}m ${secs}s Remaining`);
+  banner.classList.toggle("expiring", days===0 && hours<6);
+}
+setInterval(updateTrialCountdown, 1000);
 
 function go(view){
   document.querySelectorAll(".nav-item[data-view]").forEach(n=>
@@ -374,10 +468,13 @@ function go(view){
 async function loadMe(){
   ME = await api("/client-api/me");
   APPROVED = ME.approval_status === "approved";
+  PENDING  = !APPROVED;
+  EXPIRED  = APPROVED && ME.status === "expired";
   document.getElementById("firstName").textContent = ME.first_name;
   document.getElementById("avatar").textContent = ME.gender==="female" ? "👩" : "👨";
   const st=document.getElementById("accStatus");
-  st.textContent = ME.status==="active" ? "VIP" : (ME.status==="trial" ? "TRIAL" : ME.status.toUpperCase());
+  st.textContent = PENDING ? "PENDING"
+    : (ME.status==="active" ? "VIP" : (ME.status==="trial" ? "TRIAL" : (ME.status||"—").toUpperCase()));
   st.className = "st " + (ME.status==="active"?"vip":(ME.status==="trial"?"trial":""));
   const badge=document.getElementById("nBadge");
   badge.textContent = ME.unread_notifications;
@@ -388,17 +485,46 @@ async function loadMe(){
   document.getElementById("pGender").textContent=ME.gender||"—";
   document.getElementById("pStatus").textContent=(ME.status||"—")+" ("+ME.approval_status+")";
 
-  if(!APPROVED){
-    document.getElementById("pendingView").classList.remove("hidden");
+  // full-screen expired lock takes priority
+  document.getElementById("expiredView").classList.toggle("hidden", !EXPIRED);
+  if(EXPIRED){
+    document.getElementById("expiredTitle").textContent =
+      ME.channel==="vip" ? "Your VIP Plan Has Expired" : "Your Trial Has Expired";
+    document.getElementById("expiredText").textContent = ME.channel==="vip"
+      ? "Your VIP license has ended and trading has been paused on your account. " +
+        "Contact us on WhatsApp to renew and keep receiving live signals and automated trades."
+      : "Your free trial has ended and trading has been paused on your account. " +
+        "Contact us on WhatsApp to upgrade to VIP and keep receiving live signals and automated trades.";
     ["dashboard","profile","signals","trades","support","settings"].forEach(v=>
       document.getElementById("view-"+v).classList.add("hidden"));
-    document.querySelectorAll(".nav-item[data-view]").forEach(n=>n.style.opacity=.35);
+    document.querySelectorAll(".nav-item[data-view]").forEach(n=>{
+      n.style.opacity=.35; n.style.pointerEvents="none"; });
+    return;
+  }
+
+  // pending: dashboard stays visible with a banner; overview/lists locked until
+  // approved, but the client can still view + update their MT5 connection.
+  document.getElementById("pendingBanner").classList.toggle("hidden", !PENDING);
+  document.getElementById("dashLowerGrid").classList.toggle("hidden", PENDING);
+  document.getElementById("dashSupportCard").classList.toggle("hidden", PENDING);
+  document.getElementById("ovRefresh").classList.toggle("hidden", PENDING);
+
+  const lockedTabs = ["signals","trades","support","settings"];
+  document.querySelectorAll(".nav-item[data-view]").forEach(n=>{
+    const locked = PENDING && lockedTabs.includes(n.dataset.view);
+    n.style.opacity = locked ? .35 : "";
+    n.style.pointerEvents = locked ? "none" : "";
+  });
+  // if a locked view was open when the account (re)entered pending, snap back
+  if(PENDING){
+    const cur=[...document.querySelectorAll(".nav-item.active")][0];
+    if(cur && lockedTabs.includes(cur.dataset.view)) go("dashboard");
   }
 }
 
 /* ---------- dashboard ---------- */
 async function loadDashboard(){
-  if(!APPROVED) return;
+  if(EXPIRED) return;
   const d = await api("/client-api/dashboard");
   document.getElementById("ovBalance").textContent = fmtMoney(d.balance);
   document.getElementById("ovEquity").textContent = fmtMoney(d.equity);
@@ -415,10 +541,20 @@ async function loadDashboard(){
   document.getElementById("ovLogin").textContent = d.mt5_login||"—";
   const exp=document.getElementById("ovExpiry");
   exp.textContent = d.license_expiry ? fmtDate(d.license_expiry) : "—";
+  TRIAL_EXPIRES = (d.status==="trial" && d.license_expiry) ? d.license_expiry : null;
+  updateTrialCountdown();
+  document.getElementById("ovLastTrade").textContent =
+    d.last_trade ? fmtDate(d.last_trade) : "No trades yet";
+  const te=document.getElementById("ovTrading");
+  te.textContent = d.trading_enabled ? "Enabled" : "Disabled";
+  te.className = d.trading_enabled ? "on" : "off";
   document.getElementById("ovSynced").textContent =
     d.synced_at ? ("Updated "+ago(d.synced_at)) : "Not synced yet";
-  document.getElementById("connDot").className = "dot "+(d.connected?"g":"r");
-  document.getElementById("connText").textContent = d.connected?"Connected":"Not connected";
+  const cs = d.connection_status || (d.connected ? "connected" : "disconnected");
+  const cDot=document.getElementById("connDot"), cTxt=document.getElementById("connText");
+  if(cs==="connected"){ cDot.className="dot g"; cTxt.textContent="Connected"; }
+  else if(cs==="waiting_approval"){ cDot.className="dot y"; cTxt.textContent="Waiting for Approval"; }
+  else { cDot.className="dot r"; cTxt.textContent="Disconnected"; }
   if(!document.getElementById("cBroker").value) document.getElementById("cBroker").value=d.broker||"";
   if(!document.getElementById("cServer").value) document.getElementById("cServer").value=d.server||"";
   if(!document.getElementById("cLogin").value) document.getElementById("cLogin").value=d.mt5_login||"";
@@ -439,7 +575,7 @@ async function updateConnection(){
       server:document.getElementById("cServer").value.trim()||document.getElementById("cBroker").value.trim(),
       login:document.getElementById("cLogin").value.trim(),
       password:document.getElementById("cPassword").value||null});
-    toast(r.message, r.connected?"ok":"err");
+    toast(r.message, (r.connected||r.success)?"ok":"err");
     document.getElementById("cPassword").value="";
     loadDashboard();
   }catch(e){ toast(e.message,"err"); }
@@ -455,16 +591,43 @@ function sigRow(s){
     <span class="lr-muted">${s.immediate?"MARKET":(s.entry??"—")}</span>
     <span class="lr-right">${ago(s.time)}</span></div>`;
 }
-function tradeRow(t){
+function plHtml(v){
+  if(v==null) return '<span class="lr-muted">—</span>';
+  const up=v>=0;
+  return `<span class="${up?'pl-up':'pl-dn'}">${up?'+':'-'}$${Math.abs(v).toFixed(2)}</span>`;
+}
+function tStateLabel(s){ return s==="open"?"Running":(s==="tp1_done"?"TP1 hit":(s==="closed"?"Closed":esc(s||""))); }
+function tStatePill(s){ const cls=s==="open"?"run":(s==="tp1_done"?"tp1":"closed");
+  return `<span class="tstate ${cls}">${tStateLabel(s)}</span>`; }
+function num(v){ return v==null?"—":Number(v).toLocaleString(undefined,{maximumFractionDigits:5}); }
+
+// compact row for the narrow dashboard cards
+function histRow(t){
   return `<div class="list-row">
     <b>${esc(t.symbol||"—")}</b>
     <span class="side-${(t.direction||"").toLowerCase()}">${esc(t.direction||"")}</span>
-    <span class="lr-muted">${t.lot} Lots</span>
-    <span class="lr-muted">${esc(t.state)}</span>
-    <span class="lr-right">${ago(t.opened_at)}</span></div>`;
+    <span class="lr-muted">${tStateLabel(t.state)}</span>
+    <span class="lr-right">${plHtml(t.profit)}</span></div>`;
+}
+// full table for the Trade History / Live Trades views
+function histTable(rows, emptyMsg){
+  if(!rows.length) return `<div class="empty-mini">${emptyMsg}</div>`;
+  return `<div style="overflow-x:auto;"><table class="htab">
+    <thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Close</th>
+      <th>P/L</th><th>Status</th><th>Time</th></tr></thead><tbody>`+
+    rows.map(t=>`<tr>
+      <td><b>${esc(t.symbol||"—")}</b></td>
+      <td class="side-${(t.direction||"").toLowerCase()}">${esc(t.direction||"")}</td>
+      <td>${num(t.entry_price)}</td>
+      <td>${num(t.close_price)}</td>
+      <td>${plHtml(t.profit)}</td>
+      <td>${tStatePill(t.state)}</td>
+      <td class="lr-muted">${fmtDate(t.closed_at||t.opened_at)}</td>
+    </tr>`).join("")+`</tbody></table></div>`;
 }
 const fill=(id,rows,fn,emptyMsg)=>{ document.getElementById(id).innerHTML =
   rows.length? rows.map(fn).join("") : `<div class="empty-mini">${emptyMsg}</div>`; };
+const setHtml=(id,html)=>{ document.getElementById(id).innerHTML = html; };
 
 async function loadLists(){
   if(!APPROVED) return;
@@ -473,11 +636,11 @@ async function loadLists(){
     api("/client-api/trades?live=true&limit=10"),
     api("/client-api/signals?limit=30"), api("/client-api/trades?limit=30")]);
   fill("dashSignals",s5,sigRow,"No signals yet");
-  fill("dashTrades",t5,tradeRow,"No trades yet");
-  fill("dashLive",live,tradeRow,"No live trades");
+  fill("dashTrades",t5,histRow,"No trades yet");
+  fill("dashLive",live,histRow,"No live trades");
   fill("allSignals",s20,sigRow,"No signals yet");
-  fill("allTrades",t20,tradeRow,"No trades yet");
-  fill("allLive",live,tradeRow,"No live trades");
+  setHtml("allTrades", histTable(t20,"No trades yet"));
+  setHtml("allLive", histTable(live,"No live trades"));
 }
 
 /* ---------- notifications ---------- */
@@ -566,7 +729,9 @@ async function sendReply(){
 async function boot(){
   try{
     await loadMe();
-    if(APPROVED){ await Promise.all([loadDashboard(), loadLists(), loadTickets()]); }
+    if(EXPIRED) return;
+    if(PENDING){ await loadDashboard(); return; }   // connection card only
+    await Promise.all([loadDashboard(), loadLists(), loadTickets()]);
   }catch(e){ toast(e.message,"err"); }
 }
 boot();

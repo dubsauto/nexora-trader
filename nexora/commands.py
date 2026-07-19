@@ -44,7 +44,8 @@ def _expire_stale(db):
         db.commit()
 
 
-async def _run(action: str, client_id):
+async def _run(action: str, client_id, payload=None):
+    payload = payload or {}
     if action == "close_all":
         return await operations.close_all_for_client(client_id)
     if action == "close_runner":
@@ -55,6 +56,8 @@ async def _run(action: str, client_id):
         return await operations.close_runner_for_all()
     if action == "refresh_account":
         return await operations.refresh_account(client_id)
+    if action == "update_sl":
+        return await operations.update_sl_for_signal(payload.get("signal_id"))
     return {"success": False, "message": f"unknown action: {action}"}
 
 
@@ -64,7 +67,7 @@ async def process_pending() -> int:
     try:
         _expire_stale(db)
         cmds = db.query(Command).filter(Command.status == "pending").all()
-        jobs = [(c.id, c.action, c.client_id) for c in cmds]
+        jobs = [(c.id, c.action, c.client_id, c.payload) for c in cmds]
         for c in cmds:
             c.status = "running"
         if cmds:
@@ -72,9 +75,9 @@ async def process_pending() -> int:
     finally:
         db.close()
 
-    for cid, action, client_id in jobs:
+    for cid, action, client_id, payload in jobs:
         try:
-            result = await _run(action, client_id)
+            result = await _run(action, client_id, payload)
         except Exception as e:
             result = {"success": False, "message": str(e)}
 

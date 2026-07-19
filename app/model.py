@@ -55,6 +55,7 @@ class Client(Base):
     # Client-portal identity (signups). Admin-created clients may leave these
     # empty until the client registers.
     email = Column(String(190), nullable=True)
+    phone = Column(String(32), nullable=True)              # contact number (for admin outreach)
     client_password_hash = Column(String(255), nullable=True)
     gender = Column(String(10), nullable=True)            # male/female
 
@@ -91,6 +92,9 @@ class Client(Base):
     # Trading settings
     lot_size = Column(Float, default=0.01)              # base lot PER position
     risk_profile = Column(String(16), default="balanced")  # conservative/balanced/aggressive
+    # Positions opened per signal for this client. NULL -> use the global
+    # POSITIONS_PER_SIGNAL default (3). Engine closes all-but-one at TP1.
+    positions_per_signal = Column(Integer, nullable=True)
     deposit = Column(Float, default=0.0)                # deposit amount (admin-entered)
 
     # Optional per-client symbol overrides for rare brokers the auto-resolver
@@ -192,7 +196,14 @@ class TradeGroup(Base):
 
     opened_at = Column(DateTime, nullable=True)
     tp1_at = Column(DateTime, nullable=True)
+    closed_at = Column(DateTime, nullable=True)
     last_error = Column(Text, nullable=True)
+
+    # Trade-history fields, captured opportunistically while the account is
+    # deployed (during a signal or a manual op). Not real-time by design.
+    entry_price = Column(Float, nullable=True)   # avg fill price of the group
+    close_price = Column(Float, nullable=True)   # exit price once fully closed
+    profit = Column(Float, nullable=True)        # realized (+ floating) P/L in account currency
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -230,8 +241,9 @@ class Command(Base):
     __tablename__ = "commands"
 
     id = Column(Integer, primary_key=True)
-    action = Column(String(32), nullable=False)   # close_all / close_runner / close_all_bulk / close_runner_bulk
-    client_id = Column(Integer, nullable=True)     # null for bulk actions
+    action = Column(String(32), nullable=False)   # close_all / close_runner / *_bulk / refresh_account / update_sl
+    client_id = Column(Integer, nullable=True)     # null for bulk/signal actions
+    payload = Column(JSON, nullable=True)          # extra args, e.g. {"signal_id": 12}
     status = Column(String(12), default="pending") # pending / running / done / error
     result = Column(Text, nullable=True)
     requested_by = Column(String(64), default="admin")
