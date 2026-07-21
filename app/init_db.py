@@ -43,6 +43,7 @@ _COLUMN_ADDITIONS = [
     ("trade_groups", "entry_price", "FLOAT"),
     ("trade_groups", "close_price", "FLOAT"),
     ("trade_groups", "profit", "FLOAT"),
+    ("clients", "verification_image", "TEXT"),
 ]
 
 

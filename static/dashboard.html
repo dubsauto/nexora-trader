@@ -91,7 +91,8 @@
              align-items:center; justify-content:center; z-index:50; padding:20px; }
   .modal-bg.show{ display:flex; }
   .modal{ background:var(--panel); border:1px solid var(--line); border-radius:16px;
-          width:100%; max-width:460px; padding:22px; }
+          width:100%; max-width:460px; padding:22px;
+          max-height:calc(100vh - 40px); overflow-y:auto; }
   .modal h3{ margin:0 0 16px; }
   .field{ margin-bottom:12px; }
   .field label{ display:block; font-size:12px; color:var(--muted); margin-bottom:5px; }
@@ -351,7 +352,8 @@
 <!-- CLIENT DETAIL MODAL -->
 <div class="modal-bg" id="detailModal">
   <div class="modal" style="max-width:560px;">
-    <div style="display:flex;align-items:center;">
+    <div style="display:flex;align-items:center;position:sticky;top:-22px;
+                background:var(--panel);padding:6px 0;margin:-6px 0 0;z-index:2;">
       <h3 id="d_title" style="margin:0;">Client</h3>
       <div class="spacer" style="flex:1;"></div>
       <button class="btn sm" onclick="document.getElementById('detailModal').classList.remove('show')">✕</button>
@@ -377,6 +379,21 @@
 </div>
 
 <div id="toast"></div>
+
+<!-- image lightbox (data-URL screenshots can't open as a new tab in Chrome) -->
+<div id="lightbox" onclick="closeLightbox()" style="display:none;position:fixed;inset:0;
+     background:rgba(0,0,0,.85);z-index:200;align-items:center;justify-content:center;padding:24px;cursor:zoom-out;">
+  <img id="lightboxImg" alt="screenshot" style="max-width:96vw;max-height:92vh;border-radius:10px;
+       box-shadow:0 20px 60px rgba(0,0,0,.6);">
+</div>
+
+<script>
+function lightbox(src){ document.getElementById("lightboxImg").src=src;
+  document.getElementById("lightbox").style.display="flex"; }
+function closeLightbox(){ document.getElementById("lightbox").style.display="none";
+  document.getElementById("lightboxImg").src=""; }
+document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeLightbox(); });
+</script>
 
 <script>
 const token = localStorage.getItem("token");
@@ -505,7 +522,7 @@ function renderClients(){
     if(c.approval_status==="pending"){
       return `<tr>
         <td><b style="cursor:pointer;color:var(--cyan)" onclick="openDetail(${c.id})">${esc(c.name)}</b>
-            <br><small class="muted">${esc(c.email||"")}${c.phone?' · <a href="tel:'+esc(c.phone)+'" style="color:var(--cyan)">'+esc(c.phone)+'</a>':''} · signed up</small></td>
+            <br><small class="muted">${esc(c.email||"")}${c.phone?' · <a href="tel:'+esc(c.phone)+'" style="color:var(--cyan)">'+esc(c.phone)+'</a>':''} · signed up${c.has_verification?' · <span title="XM screenshot attached — open details to view" style="color:var(--green)">📎 XM proof</span>':' · <span title="No XM screenshot" style="color:var(--amber)">no proof</span>'}</small></td>
         <td class="mono">${esc(c.login)}<br><small class="muted">${esc(c.server)}</small></td>
         <td><span class="pill expired" style="background:rgba(255,176,32,.15);color:var(--amber)">PENDING APPROVAL</span></td>
         <td class="muted">—</td><td class="muted">—</td>
@@ -698,6 +715,9 @@ async function openDetail(id){
   document.getElementById("d_body").innerHTML =
     (c.email ? row("Email", `<a href="mailto:${esc(c.email)}" style="color:var(--cyan)">${esc(c.email)}</a>`) : "") +
     (c.phone ? row("Contact Number", `<a href="tel:${esc(c.phone)}" style="color:var(--cyan)">${esc(c.phone)}</a>`) : "") +
+    (c.verification_image
+        ? row("XM Verification", `<img src="${c.verification_image}" title="Click to view full size" onclick="lightbox(this.src)" style="max-width:260px;max-height:220px;border-radius:8px;border:1px solid var(--line);cursor:zoom-in;display:block;">`)
+        : (c.approval_status==="pending" ? row("XM Verification", '<span class="muted">not provided</span>') : "")) +
     row("MT5 Login", `<span class="mono">${esc(c.login)}</span>`) +
     row("Broker Server", esc(c.server)) +
     row("Deposit Amount", `$${(c.deposit||0).toLocaleString()}`) +

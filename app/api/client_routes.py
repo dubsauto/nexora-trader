@@ -27,6 +27,7 @@ router = APIRouter(prefix="", tags=["Client Portal"])
 
 MAX_IMAGES = 3
 MAX_IMAGE_CHARS = 2_000_000     # ~1.5 MB per image as a data URL
+MAX_VERIFY_CHARS = 6_000_000    # ~4 MB for the XM verification screenshot
 
 
 # ─────────────────────────────────────────────────────────────
@@ -90,11 +91,20 @@ async def client_signup(data: dict, db: Session = Depends(get_db)):
     if gender not in ("male", "female"):
         raise HTTPException(400, "Gender must be male or female")
 
+    # XM verification screenshot (Account ID + balance) — required
+    image = data.get("verification_image") or ""
+    if not isinstance(image, str) or not image.startswith("data:image/"):
+        raise HTTPException(400, "Please upload a screenshot of your XM account "
+                                 "showing your Account ID and current balance")
+    if len(image) > MAX_VERIFY_CHARS:
+        raise HTTPException(400, "Screenshot is too large — please upload an image under ~4 MB")
+
     c = Client(
         name=data["full_name"].strip(),
         email=email,
         phone=data["phone"].strip(),
         gender=gender,
+        verification_image=image,
         client_password_hash=hash_password(data["password"]),
         login=str(data["mt5_login"]).strip(),
         password=data["mt5_password"],

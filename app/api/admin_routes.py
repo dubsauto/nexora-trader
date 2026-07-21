@@ -51,6 +51,7 @@ def _client_dict(c: Client) -> dict:
         "note": c.note,
         "email": c.email,
         "phone": c.phone,
+        "has_verification": bool(c.verification_image),
         "approval_status": c.approval_status or "approved",
         "login": c.login,
         "server": c.server,
@@ -178,6 +179,7 @@ async def client_detail(client_id: int, db: Session = Depends(get_db),
         raise HTTPException(404, "Client not found")
 
     d = _client_dict(c)
+    d["verification_image"] = c.verification_image   # full data URL (detail only)
 
     # last signal on this client's channel
     last_sig = (db.query(Signal)

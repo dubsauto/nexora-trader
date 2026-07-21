@@ -59,6 +59,10 @@ class Client(Base):
     client_password_hash = Column(String(255), nullable=True)
     gender = Column(String(10), nullable=True)            # male/female
 
+    # XM account screenshot (Account ID + balance) uploaded at signup, so the
+    # admin can verify a genuine XM client before approving. Stored as a data URL.
+    verification_image = Column(Text, nullable=True)
+
     # 'approved'  -> full access (admin-created default)
     # 'pending'   -> self-signup awaiting admin approval (portal locked)
     approval_status = Column(String(16), default="approved")
