@@ -189,6 +189,12 @@ class TradeGroup(Base):
     signal_id = Column(Integer, ForeignKey("signals.id", ondelete="CASCADE"))
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"))
 
+    # The MetaApi account this trade was actually executed on. If the client
+    # later reconnects a DIFFERENT MT5 account, it gets a new account id, so
+    # Trade History can be filtered to only the currently-connected account
+    # (old trades from a previous/test account are hidden).
+    account_id = Column(String(255), nullable=True)
+
     magic = Column(Integer, default=0)              # unique magic for these positions
     lot = Column(Float, default=0.0)                # lot actually used per position
 

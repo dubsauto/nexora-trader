@@ -195,10 +195,11 @@ async def client_detail(client_id: int, db: Session = Depends(get_db),
         "posted_at": last_sig.posted_at.isoformat() if last_sig.posted_at else None,
     } if last_sig else None
 
-    # this client's most recent trade group
-    last_group = (db.query(TradeGroup)
-                  .filter(TradeGroup.client_id == c.id)
-                  .order_by(desc(TradeGroup.created_at)).first())
+    # this client's most recent trade group on the CURRENT account
+    last_group_q = db.query(TradeGroup).filter(TradeGroup.client_id == c.id)
+    if c.metaapi_account_id:
+        last_group_q = last_group_q.filter(TradeGroup.account_id == c.metaapi_account_id)
+    last_group = last_group_q.order_by(desc(TradeGroup.created_at)).first()
     d["last_trade"] = {
         "state": last_group.state,
         "lot": last_group.lot,

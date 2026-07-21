@@ -215,12 +215,15 @@ async def dashboard(db: Session = Depends(get_db), payload=Depends(get_current_c
 
     bot_active = bool(c.trading_enabled and c.status in ("trial", "active"))
 
-    # Most recent trade this client's account actually opened
-    last_group = (db.query(TradeGroup)
-                  .filter(TradeGroup.client_id == c.id,
-                          TradeGroup.opened_at.isnot(None))
-                  .order_by(desc(TradeGroup.opened_at)).first())
-    last_trade_at = last_group.opened_at.isoformat() if last_group else None
+    # Most recent trade on the CURRENTLY connected account (old accounts hidden)
+    last_trade_at = None
+    if c.metaapi_account_id:
+        last_group = (db.query(TradeGroup)
+                      .filter(TradeGroup.client_id == c.id,
+                              TradeGroup.account_id == c.metaapi_account_id,
+                              TradeGroup.opened_at.isnot(None))
+                      .order_by(desc(TradeGroup.opened_at)).first())
+        last_trade_at = last_group.opened_at.isoformat() if last_group else None
 
     if pending:
         conn_status = "waiting_approval"
@@ -383,7 +386,12 @@ async def client_trades(limit: int = 5, live: bool = False,
     c = _client_or_404(db, payload)
     if c.approval_status != "approved":
         raise HTTPException(403, "Account pending approval")
-    q = db.query(TradeGroup).filter(TradeGroup.client_id == c.id)
+    # Only trades executed on the client's CURRENTLY connected MT5 account.
+    # If they reconnected a different account, old trades are hidden.
+    if not c.metaapi_account_id:
+        return []
+    q = db.query(TradeGroup).filter(TradeGroup.client_id == c.id,
+                                    TradeGroup.account_id == c.metaapi_account_id)
     if live:
         q = q.filter(TradeGroup.state.in_(["open", "tp1_done"]))
     rows = q.order_by(desc(TradeGroup.created_at)).limit(min(limit, 50)).all()

@@ -12,7 +12,7 @@
 from datetime import datetime, timedelta
 
 from app.database import SessionLocal
-from app.model import TradeGroup
+from app.model import TradeGroup, Client
 
 
 def _num(x) -> float:
@@ -31,8 +31,15 @@ async def sync_client_history(conn, client_id: int):
         # ---- snapshot recent groups (short session) ----
         db = SessionLocal()
         try:
+            client = db.query(Client).get(client_id)
+            acc_id = client.metaapi_account_id if client else None
+            if not acc_id:
+                return
+            # only groups on the currently-connected account (avoids mapping
+            # this account's deals onto a previous/test account's trades)
             groups = (db.query(TradeGroup)
-                      .filter(TradeGroup.client_id == client_id)
+                      .filter(TradeGroup.client_id == client_id,
+                              TradeGroup.account_id == acc_id)
                       .order_by(TradeGroup.id.desc()).limit(80).all())
             snap = [{"id": g.id, "magic": int(g.magic or 0),
                      "tickets": [str(t) for t in (g.tickets or [])],

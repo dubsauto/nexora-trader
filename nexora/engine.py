@@ -353,6 +353,7 @@ class TradeEngine:
         db = SessionLocal()
         try:
             group = TradeGroup(signal_id=sd.id, client_id=client.id, magic=0,
+                               account_id=client.account_id,
                                lot=lot, tickets=[], state="open",
                                opened_at=datetime.utcnow())
             db.add(group)

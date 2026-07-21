@@ -44,6 +44,7 @@ _COLUMN_ADDITIONS = [
     ("trade_groups", "close_price", "FLOAT"),
     ("trade_groups", "profit", "FLOAT"),
     ("clients", "verification_image", "TEXT"),
+    ("trade_groups", "account_id", "VARCHAR(255)"),
 ]
 
 
