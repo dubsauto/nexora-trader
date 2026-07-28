@@ -39,6 +39,21 @@ def _clamp_positions(value):
         return None
 
 
+async def _apply_deploy_policy(account_id: str) -> str:
+    """Put a freshly-provisioned account into the right deploy state and return
+    the resulting deploy_state string. 24/7 mode -> DEPLOY and keep it live.
+    On-demand mode -> UNDEPLOY (MetaApi auto-deploys new accounts)."""
+    try:
+        if config.ALWAYS_DEPLOYED:
+            await account_manager.deploy(account_id)
+            return "deployed"
+        await account_manager.undeploy(account_id)
+        return "undeployed"
+    except Exception as e:
+        print(f"[Admin] deploy policy for {account_id} failed: {e}")
+        return "deployed" if config.ALWAYS_DEPLOYED else "undeployed"
+
+
 def _log(db, actor, action, message, client_id=None):
     db.add(ActivityLog(actor=actor, category="client", action=action,
                        message=message, client_id=client_id))
@@ -254,13 +269,7 @@ async def create_client(data: dict, db: Session = Depends(get_db), user=Depends(
     if prov.get("success"):
         c.metaapi_account_id = prov["account_id"]
         c.connection_note = "provisioned"
-        # On-demand cost model: keep the account UNDEPLOYED until a signal needs
-        # it. MetaApi auto-deploys a freshly created account, so undeploy it now.
-        try:
-            await account_manager.undeploy(c.metaapi_account_id)
-            c.deploy_state = "undeployed"
-        except Exception as e:
-            print(f"[Admin] undeploy after provisioning failed: {e}")
+        c.deploy_state = await _apply_deploy_policy(c.metaapi_account_id)
     else:
         c.connection_note = f"provision failed: {prov.get('message')}"
     db.commit()
@@ -348,13 +357,14 @@ async def approve_client(client_id: int, db: Session = Depends(get_db),
         if prov.get("success"):
             c.metaapi_account_id = prov["account_id"]
             c.connection_note = "provisioned"
-            try:
-                await account_manager.undeploy(c.metaapi_account_id)
-                c.deploy_state = "undeployed"
-            except Exception as e:
-                print(f"[Admin] undeploy after approval failed: {e}")
+            # Deploy on approval and keep it live (24/7 mode).
+            c.deploy_state = await _apply_deploy_policy(c.metaapi_account_id)
         else:
             c.connection_note = f"provision failed: {prov.get('message')}"
+        db.commit()
+    elif config.ALWAYS_DEPLOYED:
+        # already provisioned — just make sure it's deployed on approval
+        c.deploy_state = await _apply_deploy_policy(c.metaapi_account_id)
         db.commit()
 
     # In-portal notification + approval email

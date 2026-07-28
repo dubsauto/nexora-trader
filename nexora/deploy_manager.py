@@ -9,6 +9,7 @@
 import asyncio
 import time
 
+from nexora import config
 from app.services.account_management import account_manager
 from hedgebridge.rpc_pool import rpc_pool
 from app.database import SessionLocal
@@ -97,11 +98,15 @@ class DeployManager:
                         await rpc_pool.invalidate(account_id)
                     except Exception:
                         pass
-                    try:
-                        await account_manager.undeploy(account_id)
-                        print(f"[Deploy] connect failed - undeployed {account_id} (no leak)")
-                    except Exception as e:
-                        print(f"[Deploy] cleanup undeploy failed {account_id}: {e}")
+                    # In 24/7 mode the account is MEANT to stay deployed — don't
+                    # undeploy on a transient connect failure (the reconciler /
+                    # next signal will retry). Only undeploy in on-demand mode.
+                    if not config.ALWAYS_DEPLOYED:
+                        try:
+                            await account_manager.undeploy(account_id)
+                            print(f"[Deploy] connect failed - undeployed {account_id} (no leak)")
+                        except Exception as e:
+                            print(f"[Deploy] cleanup undeploy failed {account_id}: {e}")
                 raise
             self._refs[account_id] = self._refs.get(account_id, 0) + 1
             self._fail_until.pop(account_id, None)   # connected fine — clear any cooldown
@@ -110,19 +115,25 @@ class DeployManager:
         return conn
 
     async def release(self, account_id: str):
-        """Decrement the reference count; undeploy only when it reaches zero."""
+        """Decrement the reference count.
+
+        In 24/7 mode (config.ALWAYS_DEPLOYED) the account is KEPT deployed and the
+        connection kept warm — releasing just drops the ref. In on-demand mode the
+        account is undeployed once the last reference is gone."""
         async with self._lock(account_id):
             n = self._refs.get(account_id, 0) - 1
             if n > 0:
                 self._refs[account_id] = n
                 return   # still in use by another signal/command — do not undeploy
             self._refs.pop(account_id, None)
+            if config.ALWAYS_DEPLOYED:
+                return   # keep it deployed; the reconciler manages undeploys
             try:
                 await rpc_pool.invalidate(account_id)
             except Exception:
                 pass
             await account_manager.undeploy(account_id)
-        # reached only when the last reference was released
+        # reached only when the last reference was released (on-demand mode)
         _log_account(account_id, "undeployed", "account undeployed")
 
     async def reconnect(self, account_id: str):

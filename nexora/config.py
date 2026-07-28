@@ -98,6 +98,13 @@ CLOSE_POSITIONS_ON_EXPIRY = os.getenv("CLOSE_POSITIONS_ON_EXPIRY", "false").lowe
 # Give each managed account a dedicated IP? Costs more on MetaApi.
 USE_DEDICATED_IP = os.getenv("USE_DEDICATED_IP", "false").lower() == "true"
 
+# Deployment model:
+#   True  (24/7) -> accounts are DEPLOYED on approval and stay deployed while the
+#                   client's plan is live; only expired clients are undeployed.
+#                   Avoids the deploy/undeploy churn per signal (cheaper at scale).
+#   False (on-demand) -> legacy: deploy right before a signal, undeploy after.
+ALWAYS_DEPLOYED = os.getenv("ALWAYS_DEPLOYED", "true").lower() == "true"
+
 
 def as_dict() -> dict:
     """Snapshot of non-secret config for the dashboard / logs."""
@@ -108,6 +115,7 @@ def as_dict() -> dict:
         "trial_days": TRIAL_DAYS,
         "default_license_days": DEFAULT_LICENSE_DAYS,
         "close_positions_on_expiry": CLOSE_POSITIONS_ON_EXPIRY,
+        "always_deployed": ALWAYS_DEPLOYED,
         "trial_channel_set": bool(TRIAL_CHANNEL_ID),
         "vip_channel_set": bool(VIP_CHANNEL_ID),
         "bot_token_set": bool(TELEGRAM_BOT_TOKEN),

@@ -323,8 +323,13 @@ async def update_connection(data: dict, db: Session = Depends(get_db),
             if prov.get("success"):
                 c.metaapi_account_id = prov["account_id"]
                 c.connection_note = "provisioned"
-                await account_manager.undeploy(c.metaapi_account_id)
-                c.deploy_state = "undeployed"
+                # 24/7 mode: keep the account deployed; on-demand: undeploy.
+                if config.ALWAYS_DEPLOYED:
+                    await account_manager.deploy(c.metaapi_account_id)
+                    c.deploy_state = "deployed"
+                else:
+                    await account_manager.undeploy(c.metaapi_account_id)
+                    c.deploy_state = "undeployed"
                 # broker may have changed -> stale symbol mappings
                 c.resolved_symbols = {}
             else:

@@ -21,11 +21,13 @@ from nexora.telegram import listener
 from nexora.engine import engine
 from nexora.expiry import check_expiries
 from nexora.commands import process_pending, reset_interrupted_on_startup
+from nexora.deployment import reconcile_deployments
 from app.init_db import init_database
 
 EXPIRY_INTERVAL = 60          # seconds between expiry checks
 ENGINE_INTERVAL = 2           # seconds between engine ticks
 COMMAND_INTERVAL = 3          # seconds between command-queue checks
+DEPLOY_RECONCILE_INTERVAL = 300   # seconds between 24/7 deployment reconciliations
 
 
 async def _telegram_loop():
@@ -95,6 +97,23 @@ async def _command_loop():
         await asyncio.sleep(COMMAND_INTERVAL)
 
 
+async def _deploy_loop():
+    """24/7 deployment mode: keep active clients' accounts deployed, undeploy
+    expired ones. Idle if ALWAYS_DEPLOYED is off (legacy on-demand model)."""
+    if not config.ALWAYS_DEPLOYED:
+        print("[Worker] On-demand deployment mode (accounts deploy per signal)")
+        return
+    print("[Worker] 24/7 deployment reconciler running")
+    while True:
+        try:
+            n = await reconcile_deployments()
+            if n:
+                print(f"[Worker] deployment reconcile: {n} account(s) changed state")
+        except Exception as e:
+            print(f"[Worker] deploy reconcile error: {e}")
+        await asyncio.sleep(DEPLOY_RECONCILE_INTERVAL)
+
+
 async def main():
     await init_database()
     symbol_resolver.prime_from_db()   # resolve once, remember forever across restarts
@@ -104,6 +123,7 @@ async def main():
         _engine_loop(),
         _expiry_loop(),
         _command_loop(),
+        _deploy_loop(),
     )
 
 
