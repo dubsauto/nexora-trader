@@ -115,23 +115,29 @@ class DeployManager:
         return conn
 
     async def release(self, account_id: str):
-        """Decrement the reference count.
+        """Decrement the reference count once the last user is done.
 
-        In 24/7 mode (config.ALWAYS_DEPLOYED) the account is KEPT deployed and the
-        connection kept warm — releasing just drops the ref. In on-demand mode the
-        account is undeployed once the last reference is gone."""
+        ALWAYS drop the cached RPC connection so the NEXT signal/command builds a
+        fresh one — reusing a long-lived connection across operations let stale
+        connections silently fail get_positions/close/modify/get_price (TP1 not
+        closing, Close-All-bulk and SL edits failing). Rebuilding a connection is
+        cheap; only the account DEPLOYMENT is costly.
+
+        In 24/7 mode (config.ALWAYS_DEPLOYED) the account is LEFT DEPLOYED (the
+        reconciler manages undeploys); in on-demand mode it is undeployed here."""
         async with self._lock(account_id):
             n = self._refs.get(account_id, 0) - 1
             if n > 0:
                 self._refs[account_id] = n
-                return   # still in use by another signal/command — do not undeploy
+                return   # still in use by another signal/command — leave it alone
             self._refs.pop(account_id, None)
-            if config.ALWAYS_DEPLOYED:
-                return   # keep it deployed; the reconciler manages undeploys
+            # drop the (possibly stale) connection in BOTH modes
             try:
                 await rpc_pool.invalidate(account_id)
             except Exception:
                 pass
+            if config.ALWAYS_DEPLOYED:
+                return   # keep the account deployed; only the connection is dropped
             await account_manager.undeploy(account_id)
         # reached only when the last reference was released (on-demand mode)
         _log_account(account_id, "undeployed", "account undeployed")
