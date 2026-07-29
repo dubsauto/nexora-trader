@@ -92,6 +92,21 @@
     display:flex; flex-wrap:wrap; gap:6px 18px; font-size:12px; color:var(--muted); }
   .ov-foot b{ color:var(--text); font-weight:600; }
   .ov-foot b.on{ color:var(--green); } .ov-foot b.off{ color:var(--red); }
+
+  /* client trading on/off toggle */
+  .trade-toggle{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    margin-top:14px; padding:12px 14px; background:var(--panel2);
+    border:1px solid var(--line); border-radius:12px; }
+  .tt-label{ font-size:13.5px; font-weight:700; }
+  .tt-sub{ font-size:11.5px; color:var(--muted); margin-top:3px; line-height:1.4; }
+  .switch{ position:relative; display:inline-block; width:48px; height:27px; flex-shrink:0; }
+  .switch input{ opacity:0; width:0; height:0; }
+  .slider{ position:absolute; cursor:pointer; inset:0; background:#3a3a42; border-radius:999px; transition:.2s; }
+  .slider:before{ content:""; position:absolute; height:21px; width:21px; left:3px; top:3px;
+    background:#fff; border-radius:50%; transition:.2s; }
+  .switch input:checked + .slider{ background:var(--green); }
+  .switch input:checked + .slider:before{ transform:translateX(21px); }
+  .switch input:disabled + .slider{ opacity:.5; cursor:not-allowed; }
   .conn-row{ margin-bottom:11px; }
   .conn-row label{ display:block; font-size:11.5px; color:var(--muted); margin-bottom:5px; }
   .conn-row input{ width:100%; background:#0e0e11; color:var(--text); border:1px solid var(--line);
@@ -282,6 +297,16 @@
             <div class="mini"><div class="l">Server / Broker</div><div class="v small" id="ovServer">—</div></div>
             <div class="mini"><div class="l">MT5 Account</div><div class="v small" id="ovLogin">—</div></div>
             <div class="mini"><div class="l">Licence Expiry</div><div class="v small" id="ovExpiry">—</div></div>
+          </div>
+          <div class="trade-toggle">
+            <div>
+              <div class="tt-label">My Trading</div>
+              <div class="tt-sub" id="ttSub">Follow new signals on your account.</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="tradeSwitch" onchange="toggleClientTrading(this.checked)">
+              <span class="slider"></span>
+            </label>
           </div>
           <div class="ov-foot">
             <span>Last trade: <b id="ovLastTrade">—</b></span>
@@ -545,9 +570,21 @@ async function loadDashboard(){
   updateTrialCountdown();
   document.getElementById("ovLastTrade").textContent =
     d.last_trade ? fmtDate(d.last_trade) : "No trades yet";
+  // client trading toggle + status
+  const sw=document.getElementById("tradeSwitch");
+  const clientOn = d.client_trading !== false;
+  sw.checked = clientOn;
+  const sub=document.getElementById("ttSub");
+  if(d.admin_paused){
+    sub.textContent = "Trading is currently paused by admin — contact support.";
+  }else if(!clientOn){
+    sub.textContent = "You turned trading OFF — no new trades will open. Open trades are unaffected.";
+  }else{
+    sub.textContent = "Following new signals on your account.";
+  }
   const te=document.getElementById("ovTrading");
-  te.textContent = d.trading_enabled ? "Enabled" : "Disabled";
-  te.className = d.trading_enabled ? "on" : "off";
+  te.textContent = clientOn ? "On" : "Off";
+  te.className = clientOn ? "on" : "off";
   document.getElementById("ovSynced").textContent =
     d.synced_at ? ("Updated "+ago(d.synced_at)) : "Not synced yet";
   const cs = d.connection_status || (d.connected ? "connected" : "disconnected");
@@ -558,6 +595,16 @@ async function loadDashboard(){
   if(!document.getElementById("cBroker").value) document.getElementById("cBroker").value=d.broker||"";
   if(!document.getElementById("cServer").value) document.getElementById("cServer").value=d.server||"";
   if(!document.getElementById("cLogin").value) document.getElementById("cLogin").value=d.mt5_login||"";
+}
+
+async function toggleClientTrading(enabled){
+  const sw=document.getElementById("tradeSwitch"); sw.disabled=true;
+  try{
+    const r=await api("/client-api/trading","POST",{enabled});
+    toast(r.message,"ok");
+    await loadDashboard();
+  }catch(e){ toast(e.message,"err"); sw.checked=!enabled; }
+  sw.disabled=false;
 }
 
 async function refreshMetrics(){

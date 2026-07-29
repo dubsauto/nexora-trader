@@ -213,7 +213,8 @@ async def dashboard(db: Session = Depends(get_db), payload=Depends(get_current_c
     elif c.status == "active" and c.license_expires_at:
         expiry = c.license_expires_at.isoformat()
 
-    bot_active = bool(c.trading_enabled and c.status in ("trial", "active"))
+    client_on = c.client_trading_enabled is not False   # None (legacy) = on
+    bot_active = bool(c.trading_enabled and client_on and c.status in ("trial", "active"))
 
     # Most recent trade on the CURRENTLY connected account (old accounts hidden)
     last_trade_at = None
@@ -246,9 +247,31 @@ async def dashboard(db: Session = Depends(get_db), payload=Depends(get_current_c
         "connected": bool(c.metaapi_account_id),
         "connection_status": conn_status, "pending": pending,
         "last_trade": last_trade_at,
-        "trading_enabled": bool(c.trading_enabled),
+        "trading_enabled": bool(c.trading_enabled),      # admin switch
+        "client_trading": client_on,                     # client's own switch (toggle)
+        "admin_paused": (not c.trading_enabled),         # so UI can explain a pause
         "lot_size": c.lot_size, "risk_profile": c.risk_profile,
     }
+
+
+@router.post("/client-api/trading")
+async def set_client_trading(data: dict, db: Session = Depends(get_db),
+                             payload=Depends(get_current_client)):
+    """Client turns their OWN trading on/off. Independent of the admin switch —
+    the account only trades when both are ON. Does not touch open positions."""
+    c = _client_or_404(db, payload)
+    if c.approval_status != "approved":
+        raise HTTPException(403, "Account pending approval")
+    enabled = bool(data.get("enabled"))
+    c.client_trading_enabled = enabled
+    _log(db, "client_trading",
+         f"{c.name}: turned trading {'ON' if enabled else 'OFF'} from their dashboard", c.id)
+    db.commit()
+    return {"success": True, "client_trading": enabled,
+            "message": ("Trading turned ON — your account will follow new signals."
+                        if enabled else
+                        "Trading turned OFF — no new trades will open on your account. "
+                        "Open trades are not affected.")}
 
 
 @router.post("/client-api/refresh")

@@ -549,7 +549,7 @@ function renderClients(){
           <option value="vip" ${c.channel==='vip'?'selected':''}>VIP</option>
         </select>
       </td>
-      <td><span class="dot ${c.trading_enabled?'on':'off'}" title="${c.trading_enabled?'Trading ON':'Trading OFF'}"></span></td>
+      <td><span class="dot ${c.trading_enabled?'on':'off'}" title="Admin trading ${c.trading_enabled?'ON':'OFF'}"></span>${c.client_trading_enabled===false?' <span title="Client turned THEIR trading OFF — that is why they may not be getting trades" style="color:var(--red);font-size:10px;font-weight:800;">CLIENT&nbsp;OFF</span>':''}</td>
       <td class="mono">${c.lot_size}</td>
       <td>${c.risk_profile}</td>
       <td>${expiryText(c)}</td>
@@ -727,7 +727,10 @@ async function openDetail(id){
     row("License Status", `<span class="pill ${c.status}">${c.status}</span>`) +
     row("Expiry Date", exp ? fmt(exp) : "—") +
     row("Telegram Channel", `<span class="pill ${chCls}">${c.channel}</span>`) +
-    row("Trading", c.trading_enabled ? '<span style="color:var(--green)">ON</span>' : '<span class="muted">OFF</span>') +
+    row("Trading (admin)", c.trading_enabled ? '<span style="color:var(--green)">ON</span>' : '<span class="muted">OFF</span>') +
+    row("Trading (client switch)", c.client_trading_enabled === false
+        ? '<span style="color:var(--red)">OFF — client turned trading off</span>'
+        : '<span style="color:var(--green)">ON</span>') +
     row("MetaApi", c.provisioned ? '<span style="color:var(--green)">provisioned</span>' : `<span class="muted">${esc(c.connection_note||"not provisioned")}</span>`) +
     row("Broker Symbols (auto-detected)", resolvedSymbolsHtml(c)) +
     row("Last Signal Received", ls

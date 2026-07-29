@@ -86,7 +86,10 @@ class Client(Base):
     # Lifecycle
     status = Column(String(16), default="inactive")     # trial/active/inactive/expired
     channel = Column(String(8), default="trial")        # trial/vip
-    trading_enabled = Column(Boolean, default=True)     # pause/resume without changing license
+    trading_enabled = Column(Boolean, default=True)     # ADMIN pause/resume switch
+    # CLIENT's own trading switch (from their dashboard). The account only trades
+    # when BOTH the admin and the client have trading ON.
+    client_trading_enabled = Column(Boolean, default=True)
 
     # Trial + license dates (UTC)
     trial_started_at = Column(DateTime, nullable=True)
@@ -122,7 +125,9 @@ class Client(Base):
     def is_eligible(self, signal_channel: str) -> bool:
         """A client trades only if active/trial, trading ON, not expired,
         and the signal's channel matches the client's assigned channel."""
-        if not self.trading_enabled:
+        if not self.trading_enabled:            # admin switch
+            return False
+        if self.client_trading_enabled is False:  # client's own switch (None = on)
             return False
         if self.status not in ("trial", "active"):
             return False

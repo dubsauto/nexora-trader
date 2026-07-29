@@ -45,6 +45,7 @@ _COLUMN_ADDITIONS = [
     ("trade_groups", "profit", "FLOAT"),
     ("clients", "verification_image", "TEXT"),
     ("trade_groups", "account_id", "VARCHAR(255)"),
+    ("clients", "client_trading_enabled", "BOOLEAN DEFAULT TRUE"),
 ]
 
 

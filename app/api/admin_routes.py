@@ -73,6 +73,7 @@ def _client_dict(c: Client) -> dict:
         "status": c.status,
         "channel": c.channel,
         "trading_enabled": c.trading_enabled,
+        "client_trading_enabled": c.client_trading_enabled is not False,
         "lot_size": c.lot_size,
         "risk_profile": c.risk_profile,
         "positions_per_signal": c.positions_per_signal,
