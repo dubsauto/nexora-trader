@@ -183,11 +183,12 @@ class TradeEngine:
                      f"No eligible {sd.channel} clients — signal skipped", signal_id=signal_id)
                 return
 
+            verb = "connecting" if config.ALWAYS_DEPLOYED else "deploying"
             _log("signal", "processing",
                  f"{sd.symbol} {sd.direction} {sd.channel} — "
-                 f"{len(eligible)} eligible client(s), deploying", signal_id=signal_id)
+                 f"{len(eligible)} eligible client(s), {verb}", signal_id=signal_id)
 
-            # ---- acquire (deploy + connect) all in parallel ----
+            # ---- acquire (connect; accounts already deployed in 24/7 mode) ----
             acq = await asyncio.gather(
                 *[deploy_manager.acquire(c.account_id) for c in eligible],
                 return_exceptions=True)
@@ -232,19 +233,14 @@ class TradeEngine:
                      signal_id=signal_id)
                 return
 
-            # ---- opportunistic account sync for the client portal (best-effort,
-            #      we already hold live connections so this is nearly free) ----
+            # ---- opportunistic balance/equity sync (fast, 5s cap). NOTE: trade
+            #      history sync is deliberately NOT done here — it queries deal
+            #      history and must never sit in front of the entry/fill. ----
             for c in active:
                 try:
                     info = await asyncio.wait_for(
                         connections[c.account_id].get_account_information(), timeout=5)
                     metrics.record_metrics(c.id, info.get("balance"), info.get("equity"))
-                except Exception:
-                    pass
-                # capture outcomes of PRIOR trades (e.g. a runner that closed
-                # while the account was undeployed) now that we're connected
-                try:
-                    await trade_history.sync_client_history(connections[c.account_id], c.id)
                 except Exception:
                     pass
 
@@ -258,11 +254,22 @@ class TradeEngine:
                      signal_id=signal_id)
                 return
 
-            # ---- open 3 positions per client ----
-            await asyncio.gather(
+            # ---- open positions per client ----
+            open_results = await asyncio.gather(
                 *[self._open_positions(sd, c, connections[c.account_id], resolved[c.account_id])
                   for c in active],
                 return_exceptions=True)
+            total_opened = sum(r for r in open_results if isinstance(r, int))
+
+            # Only report "filled" if at least one real position opened. If every
+            # account failed to open, the signal was NOT filled — say so instead
+            # of showing a misleading "Filled" while nothing hit the broker.
+            if total_opened <= 0:
+                _set_signal_state(signal_id, "expired")
+                _log("signal", "not_filled",
+                     "No positions could be opened on any account — signal not filled "
+                     "(check broker connection / symbol / margin)", signal_id=signal_id)
+                return
             _set_signal_state(signal_id, "filled")
 
             # ---- manage TP1 (no DB session held across the loop) ----
@@ -403,6 +410,7 @@ class TradeEngine:
                  f"{client.name}: opened {opened}/{count} "
                  f"{sd.direction} @ lot {lot} (magic {magic})",
                  client_id=client.id, signal_id=sd.id)
+        return opened
 
     # ============================================================
     # TP1 MANAGEMENT — close 2, break-even the 3rd

@@ -9,6 +9,7 @@
 # As a result, a trade's final P&L is captured the next time its account is
 # deployed after it closes — not in real time. This is by design.
 
+import asyncio
 from datetime import datetime, timedelta
 
 from app.database import SessionLocal
@@ -61,7 +62,7 @@ async def sync_client_history(conn, client_id: int):
 
         # ---- 1) open positions: floating P/L, entry price, still-open flag ----
         try:
-            positions = await conn.get_positions()
+            positions = await asyncio.wait_for(conn.get_positions(), timeout=8)
         except Exception:
             positions = []
         floating, entry_sum, open_count = {}, {}, {}
@@ -81,7 +82,8 @@ async def sync_client_history(conn, client_id: int):
         since = (since or datetime.utcnow() - timedelta(days=7)) - timedelta(minutes=5)
         deals = []
         try:
-            res = await conn.get_deals_by_time_range(since, datetime.utcnow())
+            res = await asyncio.wait_for(
+                conn.get_deals_by_time_range(since, datetime.utcnow()), timeout=10)
             deals = (res.get("deals") if isinstance(res, dict) else res) or []
         except Exception:
             deals = []

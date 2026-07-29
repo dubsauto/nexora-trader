@@ -16,6 +16,19 @@ from app.database import SessionLocal
 from app.model import Client, ActivityLog
 from app.services.account_management import account_manager
 from nexora.deploy_manager import deploy_manager
+from hedgebridge.rpc_pool import rpc_pool
+
+
+async def _warm_connection(account_id: str):
+    """Best-effort: make sure a live RPC connection is cached and ready for this
+    (already deployed) account, so the next signal opens instantly instead of
+    waiting 30-50s for a fresh build. get_connection(force=False) triggers a
+    background build if none exists and returns fast; the watchdog then keeps it
+    alive. Any 'building/cooldown' exception is expected and ignored."""
+    try:
+        await rpc_pool.get_connection(account_id, force=False)
+    except Exception:
+        pass
 
 
 def _log(action, message, client_id=None):
@@ -66,14 +79,18 @@ async def reconcile_deployments() -> int:
     changed = 0
     for cid, name, acc_id, dstate, want in rows:
         try:
-            if want and dstate != "deployed":
-                r = await account_manager.deploy(acc_id)
-                if r.get("success"):
-                    _set_state(cid, "deployed")
-                    _log("deployed", f"{name}: account deployed (24/7)", cid)
-                    changed += 1
-                else:
-                    print(f"[Deployment] deploy failed for {name}: {r.get('message')}")
+            if want:
+                if dstate != "deployed":
+                    r = await account_manager.deploy(acc_id)
+                    if r.get("success"):
+                        _set_state(cid, "deployed")
+                        _log("deployed", f"{name}: account deployed (24/7)", cid)
+                        changed += 1
+                    else:
+                        print(f"[Deployment] deploy failed for {name}: {r.get('message')}")
+                        continue
+                # keep a warm connection ready so entries are instant
+                await _warm_connection(acc_id)
             elif not want and dstate != "undeployed":
                 if deploy_manager.refcount(acc_id) > 0:
                     continue   # in use by a running signal/command — leave it

@@ -351,23 +351,31 @@ class RpcConnectionPool:
 
                     if count < self._max_failures:
                         # Probe timed out but below the failure threshold.
-                        # The SDK is often slow under load (subscription manager
-                        # backlog, out-of-order packets) — a single timeout does
-                        # NOT mean the connection is dead.  Return it optimistically
-                        # and re-probe on the next get_connection() call (_verified_at
-                        # is not updated so the probe fires again immediately).
-                        self._last_used[account_id] = now
-                        return connection
+                        if not force:
+                            # Background/poll caller: the SDK is often just slow
+                            # under load (subscription backlog) — a single timeout
+                            # does NOT mean it's dead. Return it optimistically and
+                            # re-probe next call (_verified_at not updated).
+                            self._last_used[account_id] = now
+                            return connection
+                        # force=True is an EXPLICIT trade action (open/close/modify
+                        # /price). Never hand it a connection that just failed its
+                        # probe — drop it and build a fresh one below instead.
+                        await self._close_connection_safely(connection, account_id)
+                        self._connections.pop(account_id, None)
+                        self._verified_at.pop(account_id, None)
+                        connection = None
 
-                    # Reached failure limit → close and hard reset
-                    await self._close_connection_safely(connection, account_id)
-                    self._connections.pop(account_id, None)
-                    self._verified_at.pop(account_id, None)
-                    await self._hard_reset(account_id)
-                    raise Exception(
-                        f"[RpcPool] {account_id} hard reset after "
-                        f"{count} consecutive probe failures, retry after cooldown"
-                    )
+                    else:
+                        # Reached failure limit → close and hard reset
+                        await self._close_connection_safely(connection, account_id)
+                        self._connections.pop(account_id, None)
+                        self._verified_at.pop(account_id, None)
+                        await self._hard_reset(account_id)
+                        raise Exception(
+                            f"[RpcPool] {account_id} hard reset after "
+                            f"{count} consecutive probe failures, retry after cooldown"
+                        )
 
             # ── force=True: build inline (must not fail silently) ──────────
             if force:

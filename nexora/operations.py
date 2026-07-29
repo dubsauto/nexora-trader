@@ -4,6 +4,8 @@
 # "Close All" for a client. Each follows the on-demand pattern:
 # deploy -> act -> undeploy, so no account stays connected afterwards.
 
+import asyncio
+
 from nexora import config
 from app.database import SessionLocal
 from app.model import Client, TradeGroup, ActivityLog
@@ -213,10 +215,10 @@ async def refresh_account(client_id: int) -> dict:
 
 
 async def update_sl_for_signal(signal_id) -> dict:
-    """Modify the stop-loss on every OPEN position of a signal, across all
-    clients, to the signal's current SL value. Runs per-account: deploy → modify
-    → undeploy (shared with the engine if it still holds the account).
-    Groups already at TP1 (runner at break-even) are left untouched."""
+    """Modify the stop-loss on every LIVE position of a signal, across all
+    clients, to the signal's current SL value. Applies to still-open groups AND
+    break-even runners (tp1_done) so the admin's SL change lands on every trade
+    that is still on the broker."""
     from app.model import Signal
     db = SessionLocal()
     try:
@@ -224,10 +226,10 @@ async def update_sl_for_signal(signal_id) -> dict:
         if not sig:
             return {"success": False, "message": "signal not found"}
         new_sl = sig.sl
-        # only groups still fully open (pre-TP1) — don't override break-even runners
+        # every group that may still have live positions (pre-TP1 or the runner)
         groups = (db.query(TradeGroup)
                   .filter(TradeGroup.signal_id == signal_id,
-                          TradeGroup.state == "open").all())
+                          TradeGroup.state.in_(["open", "tp1_done"])).all())
         targets = []
         for g in groups:
             client = db.query(Client).get(g.client_id)
@@ -238,16 +240,17 @@ async def update_sl_for_signal(signal_id) -> dict:
 
     if not targets:
         return {"success": True, "updated": 0, "clients": 0,
-                "message": "no open positions to update"}
+                "message": "no live positions to update"}
 
     total = 0
+    errors = []
     for client_id, name, acc_id, magic in targets:
         async def _do(conn, magic=magic):
             try:
-                positions = await conn.get_positions()
+                positions = await asyncio.wait_for(conn.get_positions(), timeout=10)
             except Exception as e:
                 return {"success": False, "message": str(e)}
-            updated = 0
+            updated, failed = 0, None
             for p in positions:
                 if int(p.get("magic", 0) or 0) != int(magic):
                     continue
@@ -255,19 +258,29 @@ async def update_sl_for_signal(signal_id) -> dict:
                                                  tp=p.get("takeProfit"))
                 if r.get("success"):
                     updated += 1
-            return {"success": True, "updated": updated}
+                else:
+                    failed = r.get("error")
+            return {"success": True, "updated": updated, "failed": failed}
         res = await _with_connection(acc_id, _do)
+        if not res.get("success"):
+            errors.append(f"{name}: {res.get('message')}")
+        elif res.get("failed"):
+            errors.append(f"{name}: {res.get('failed')}")
         if res.get("success"):
             total += res.get("updated", 0)
 
     db = SessionLocal()
     try:
-        _log(db, "update_sl",
-             f"Signal #{signal_id}: SL updated to {new_sl} on {total} position(s) "
-             f"across {len(targets)} client(s)")
+        msg = (f"Signal #{signal_id}: SL updated to {new_sl} on {total} position(s) "
+               f"across {len(targets)} client(s)")
+        if errors:
+            msg += f" — {len(errors)} issue(s): " + "; ".join(errors[:3])
+        _log(db, "update_sl", msg)
     finally:
         db.close()
-    return {"success": True, "updated": total, "clients": len(targets), "new_sl": new_sl}
+    return {"success": total > 0 or not errors, "updated": total,
+            "clients": len(targets), "new_sl": new_sl,
+            "errors": errors or None}
 
 
 async def close_all_for_expired():

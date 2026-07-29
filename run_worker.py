@@ -117,6 +117,10 @@ async def _deploy_loop():
 async def main():
     await init_database()
     symbol_resolver.prime_from_db()   # resolve once, remember forever across restarts
+    # Keepalive: probe every live RPC connection on a timer so 24/7 connections
+    # don't idle-die between signals (a dead connection silently fails trades).
+    from hedgebridge.rpc_pool import rpc_pool
+    rpc_pool.start_watchdog()
     print("[Worker] NEXORA worker starting…")
     await asyncio.gather(
         _telegram_loop(),
