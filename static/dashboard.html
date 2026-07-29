@@ -538,7 +538,7 @@ function renderClients(){
       ? `<button class="btn sm" title="Deactivate — stop this client from trading" onclick="act(${c.id},'deactivate')">Deactivate</button>`
       : `<button class="btn sm green" title="Activate full license & move to VIP" onclick="activate(${c.id})">Activate</button>`;
     const trialBtn = isActive ? "" :
-      `<button class="btn sm" title="Start a 3-day free trial (Trial channel)" onclick="act(${c.id},'start-trial')">Start Trial</button>`;
+      `<button class="btn sm" title="Start a 1-day free trial (Trial channel)" onclick="act(${c.id},'start-trial')">Start Trial</button>`;
     return `<tr>
       <td><b style="cursor:pointer;color:var(--cyan)" title="Open client details" onclick="openDetail(${c.id})">${esc(c.name)}</b>${prov}<br><small class="muted">${esc(c.note||"")}</small></td>
       <td class="mono">${esc(c.login)}<br><small class="muted">${esc(c.server)}</small></td>
@@ -739,7 +739,7 @@ async function openDetail(id){
     ? `<button class="btn sm" title="Stop this client from trading" onclick="act(${c.id},'deactivate'); closeDetail();">Deactivate</button>`
     : `<button class="btn sm green" title="Activate full license & move to VIP" onclick="activate(${c.id}); closeDetail();">Activate</button>`;
   const trialBtnD = isActiveD ? "" :
-    `<button class="btn sm" title="Start a 3-day free trial" onclick="act(${c.id},'start-trial'); closeDetail();">Start Trial</button>`;
+    `<button class="btn sm" title="Start a 1-day free trial" onclick="act(${c.id},'start-trial'); closeDetail();">Start Trial</button>`;
   document.getElementById("d_actions").innerHTML = `
     <div style="display:flex;align-items:center;gap:8px;margin-right:auto;">
       <span class="muted" style="font-size:12px;">Channel:</span>

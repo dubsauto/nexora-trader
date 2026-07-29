@@ -63,7 +63,7 @@ secret env vars on BOTH services in the Render dashboard:
 
 1. Client sends MT5 **login + server + password**.
 2. **Add Client** on the dashboard → a MetaApi account is auto-provisioned.
-3. **Start Trial** → 3-day trial on the Trial channel.
+3. **Start Trial** → 1-day trial on the Trial channel.
 4. After the trial, **Activate** (sets a license + moves to VIP), or let it
    auto-expire.
 

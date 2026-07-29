@@ -84,7 +84,7 @@ def risk_multiplier(profile: str) -> float:
 # ─────────────────────────────────────────────────────────────
 # Trial / license
 # ─────────────────────────────────────────────────────────────
-TRIAL_DAYS = _int("TRIAL_DAYS", 3)                 # 3-day free trial
+TRIAL_DAYS = _int("TRIAL_DAYS", 1)                 # 1-day free trial
 DEFAULT_LICENSE_DAYS = _int("DEFAULT_LICENSE_DAYS", 30)
 
 # On trial/license expiry: block only NEW trades, let open trades finish
